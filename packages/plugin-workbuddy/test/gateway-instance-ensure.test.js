@@ -840,6 +840,10 @@ test('★★ 动手之前就取消 ⇒ 一个字节都不动（launcher 一次�
   let launches = 0;
   const { ensure } = createEnsurer({
     probe: async () => NO_SIDECAR,
+    // ★ 取消发生在动手之前，这一支压根走不到活性探针；但注入它仍然必要 ——
+    //   否则 `isDesktopRunning` 会拿**真机**的 `~/.workbuddy/wbipc/endpoint.json`
+    //   去连真机管道（测试纪律：绝不碰真机桌面端，实测会留下两条不灭的 Pipe 句柄）。
+    brokerProbe: async () => ({ running: true, error: null }),
     sleep: clk.sleep,
     now: clk.now,
     waitMs: 60_000,
@@ -1223,3 +1227,4 @@ test('★★★ `workbuddy_status` 必须把 lastRun.instance 原样送到模型
   assert.equal(bare.lastRun.instance, undefined, '★ 没有就是没有，不许补一个 stage:"" 的假结论');
   assert.equal(bare.lastRun.transport, 'spawn');
 });
+

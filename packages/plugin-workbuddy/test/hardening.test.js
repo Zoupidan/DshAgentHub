@@ -1088,4 +1088,3 @@ test('★★★ apply.js 代码里不得再出现任何 Shell/控制台进程字
   const spawnSites = src.match(/subprocess\.spawn\(/g) ?? [];
   assert.equal(spawnSites.length, 1, `★ 全文件只允许 launcher 这一处进程出口，实际 ${spawnSites.length} 处`);
 });
-
