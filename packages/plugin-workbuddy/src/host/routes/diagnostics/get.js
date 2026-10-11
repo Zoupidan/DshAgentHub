@@ -2,8 +2,8 @@
  * `GET /plugin-workbuddy/diagnostics` —— 下发链路的**只读**体检。
  *
  * <p>★★ 为什么单独开一个端点，而不是把结论塞进状态载荷：
- *   状态路由是 UI 的轮询路径，而 `inspect()` 每次都要逐个候选读一次口令
- *   再加 HTTP 探活。挂上去等于每轮轮询都拖一秒以上。
+ *   状态路由是 UI 的轮询路径，而 `inspect()` 每次都要逐个候选取口令（2026-10-10 起
+ *   只剩插件设置这一个来源，不再有跨进程读）+ HTTP 探活。挂上去等于每轮轮询都拖一秒以上。
  *   而这条链的失败在日志里**一个字都没有**（实测 2026-09-28：下发给桌面端两条空闲
  *   sidecar，dsh-web.log 里连 workbuddy 都没有），于是"为什么发不出去"只能靠猜。
  *   单独一个端点 = 需要时查一次，不拖 UI。
@@ -11,7 +11,7 @@
  * <p>★ 安全性：只做发现与探活，**不下发任何东西**（`inspect()` 语义即如此），
  *   且沿用 `isLoopback` + `isLoopbackHost` 双闸。
  *
- * <p>★ 缓存：`inspect()` 要逐候选取口令 + 探活，**连续点会连着付代价**，
+ * <p>★ 缓存：`inspect()` 要逐个候选取口令 + 探活，**连续点会连着付代价**，
  *   所以按 TTL 缓存（默认 15s，够用又不至于把探活打满）。`?refresh=1` 强制重算。
  *
  * <p>★★ 2026-10-10：**受插件 `enabled` 开关门控**。
@@ -124,8 +124,8 @@ export function makeDiagnosticsRoute(dispatch = null, runtime = null, { ttlMs = 
       try {
         raw = await dispatch.inspect();
       } catch (e) {
-        // ★ inspect 自己抛出来也算**结论**（比如 ports 解析崩了）。不能吞成 500：
-        //   那样就退回"猜"的老路，而这正是本端点要消灭的状态。
+        // ★ inspect 自己抛出来也算**结论**。不能吞成 500：那样就退回"猜"的老路，
+        //   而这正是本端点要消灭的状态。
         sendJson(res, 200, { available: true, inspectThrew: true, error: String(e?.message ?? e) });
         return;
       }

@@ -263,11 +263,11 @@ function boot(overrides = {}) {
       state.spawnCalls.push(call);
       let resolveDone;
       const done = new Promise((resolve) => { resolveDone = resolve; });
-      // ★ 读环境块的助手在假宿主里**确定性地不可用**（立即以 1 退出）。
-      //   它不这么做的话，"口令读不到"这条路径就变成"等真实 PowerShell 跑完"，
-      //   或者（runner 无界时）永远不收尾 —— 两种都是这条用例不该依赖的东西。
-      const isEnvHelper = call.argv.some((a) => /read-sidecar-env\.ps1$/i.test(a));
-      if (isEnvHelper) queueMicrotask(() => resolveDone({ exitCode: 1 }));
+      // ★ 2026-10-10：这里原有一条 `isEnvHelper` 分支 —— 专门让假件对
+      //   `assets/read-sidecar-env.ps1`（读 sidecar PEB 的 PowerShell 助手）**确定性地
+      //   立即以 1 退出**，免得"口令读不到"那条路径在假宿主里退化成"等真实 PowerShell
+      //   跑完"或永不收尾。那条取口令的路已随零进程出口清理整体删除（helper 脚本也没了），
+      //   分支再也打不着 ⇒ 删除。留着就是一段走不到的死代码。
       // ★ 与 test/host.test.js 的假件**逐字同源**（增量⑥ fix#1：只有本次 spawn 申请了
       //   `stdio.<流>.spill` 且确实溢出（lossy）时才回传 `spillPath`；真机语义见 host.test.js 处注释）。
       const collector = (getText, getLossy, getSpillSpec) => ({

@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "WorkBuddy CLI as model-facing dsh tools (spawned via ctx.subprocess, tracked via ctx.jobs).",
+  "description": "把本机 WorkBuddy 桌面端暴露成 dsh 的模型面工具：经 CDP 追发/点火 + 桌面端内部自动化队列下发，零 CLI、零反代。",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",

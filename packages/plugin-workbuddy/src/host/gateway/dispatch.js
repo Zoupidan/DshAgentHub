@@ -416,7 +416,9 @@ export function createDispatcher(deps = {}) {
         candidates: entries.length,
         hostManaged: entries.filter((e) => e.hostManaged).length,
         // ★ 新增：解析出端点的有几个。5.6.2 之后 `candidates > 0` 但 `resolved === 0`
-        //   是一种**独立**的失效（session 文件没写 url，端口表也查不到），得能分开看。
+        //   是一种**独立**的失效（session 文件没写 url），得能分开看。
+        //   ★ 2026-10-10：按 pid 反查 OS 端口表那条路（netstat/lsof）已随进程出口清理删除，
+        //     所以"端点"现在只有一个来源 —— session 文件自己写的 `url`。
         resolved,
         picked: picked === null ? null : { pid: picked.entry.pid, url: picked.entry.url },
         unavailable,
