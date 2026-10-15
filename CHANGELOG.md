@@ -26,12 +26,30 @@
   本次新建）：工具用法、智能团队用法（`spawn_teammate(name="workbuddy",
   description="WorkBuddy · …")` → 成员调 `workbuddy_run` 下发）、硬约束（唯一桌面端通道 /
   零 CLI / 零反代）与状态查看方式。
+- **设置「Harness 接入」父条目（hub 合并）**：新包 `packages/plugin-harness-hub` ——
+  设置导航栏里 WorkBuddy / OpenCode 卡片不再各占一条，收进同一父条目的两个子标签
+  （子槽 `settings.harness-hub.tab`；标签位次 10/20）。两包注册迁移后，DSH 桌面端**真机目验通过**
+  （父条目可见 / 两标签可切换 / 面板互斥渲染 / 零崩溃日志；截图 `tmp/dsh-hub-nav-20261015.png`、
+  `tmp/dsh-hub-tabs-20261015.png`）；「槽未声明时静默不发生」⇒ 壳不在场时父是唯一入口、不留孤儿。
+- **卡片状态标签（运行态如实呈现）**：opencode 六态 `未开启/未探测/未启动/已启动/工作中/任务下发中`；
+  workbuddy 八态 `未开启/未安装/检测中/工作中（N）/未启动/功能受限/已启动/已开启`（桌面端死活以
+  credits/checkin 的 `workbuddy_desktop_closed` 归因码为负向证据、ok/live 为正向证据；**无证据不宣称
+  「已启动」**）。词表两卡对齐，由双侧测试钉住。
+- **opencode 任务四态如实**：在途逐条 `下发中/执行中`（+亲和键/已等待）；`opencode_status` 在途明细 +
+  lastRun 无终态回执 ⇒ `NOT finished` 告警；「压缩中」当前无可观察信号 ⇒ **如实留空**（补信号最小路径
+  登记于 `src/host/launch/in-flight-states.js` 文件头）；硬红线：超时/中止不判成败、**无终态回执 ≠ 已结束**
+  （工具面 + 卡片面双呈现，测试钉死）。
+- **并发预算句**：两包系统提示词（就绪/可用分支）声明「单 harness ≤3、全部 harness 合计 ≤4（dsh 协调）」；
+  数字断言 + 突变自检证明断言有判别力。
+- **WorkBuddy 同会话两轮复用真机闭环**：Round1 队列点火建会话（暗号）→ Round2 **CDP 追发同一条对话**
+  复述暗号；落库恰 1 行会话、`updated_at` 推进（`tmp/smoke-wb-reuse-2r.log`）。
 ### 变更（Changed）
 - **发布策略：不再提供打包发布版**（Owner 决策 2026-10-10）。GitHub 三个 Release 与版本
   tag（v0.2.1/0.2.2/0.2.3）已删除，本地 release zip 已清；仓库无打包/发布工作流。部署
   唯一路径 = junction 指向本仓库 + 重启 DSH。README「发布」节同步改写。
 ### 维护（Chore）
 - `test:host` 清单对齐磁盘：移除已删的 `gateway-portmap.test.js`、补入 `status-anti-prune.test.js`（38 个文件全在盘）。
+- 门禁挂载与终验：`test:client` 纳入 hub 卡片测试、`test:host` 纳入 opencode `runtime-locks`；本轮三闸 = 红线 4/4 + 宿主 682/682 + UI 139/139（2026-10-15 深夜收口轮）。
 
 ## [0.3.0] - 2026-10-10
 
