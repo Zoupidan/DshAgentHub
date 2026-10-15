@@ -15,7 +15,8 @@
  *   宿主载荷里那份"命令行支持快照"已废弃，本文件不再读它。
  *
  * ★ 2026-10-02（四块布局）：卡片内容区按**四段**组织，而不是等权行堆叠 ——
- *     ① 头（`header`）：标题 + 三态徽标 + 收起态**三值摘要**（当前模型 · 推理强度 · 剩余积分）；
+ *     ① 头（`header`）：标题 + **状态标签**（运行态；词表与 opencode 卡对齐，判定见 `badgeOf`）
+ *        + 收起态**三值摘要**（当前模型 · 推理强度 · 剩余积分）；
  *     ② 任务（`TaskBlock`）：对话标题 + 回执（人话）+ 在途空态；失败只说人话，编号/证据进详情折叠；
  *     ③ 配置（`dsh-wb-group`）：开关 + 模型（搜索 + 按倍率分组）+ 推理强度（6 档，不含 off）；
  *     ④ 状态（`StatusBlock`）：积分（单位中文化）+ 列表来源 + 诊断折叠。
@@ -173,6 +174,27 @@ window.__ModuleLoader__.load({
             followUpPrefix: '追发通道：',
             fallbackReasonPrefix: '回退原因：',
             originPrefix: '会话来源：',
+          },
+          /**
+           * 状态（运行态）标签 —— 卡头那一个符号要回答的是"这个 harness 现在是什么状态"。
+           *
+           * ★★ 词表与 opencode 卡对齐（2026-10-16）★★
+           *   `packages/plugin-opencode/lib/client.js` 的 `DICT.zh.detail.badge` / `badgeOf()` 用同一组词：
+           *   未开启 / 未安装 / 检测中 / 工作中 / 未启动 / 功能受限 / 已启动 / 已开启（判定见本包 `badgeOf`）。
+           *   两个包各持一份字典（AGENTS.md §6：一 harness 一包，互不共享状态）⇒ **改词表必须两边一起改**。
+           *   ⚠️ 本包没有「任务下发中」：在途记录里没有下发阶段信号（host 的 `inFlight[]` 恒 `state:'running'`，
+           *   见 src/host/config/runtime.js:328-349）—— 没有信号就不编（opencode 卡有它是它自己有 phase）。
+           */
+          badge: {
+            unknown: '… 检测中',
+            off: '○ 未开启',
+            notInstalled: '○ 未安装',
+            /** 可带数量：`◐ 工作中（2）`（在途数由任务块另行如实列出，徽标带数只为收起态也看得见）。 */
+            working: (n) => '◐ 工作中（' + n + '）',
+            notStarted: '○ 未启动',
+            limited: '⚠ 功能受限',
+            ready: '● 已启动',
+            on: '● 已开启',
           },
           /** 状态区。 */
           status: {
@@ -335,15 +357,122 @@ window.__ModuleLoader__.load({
      */
     const EFFORT_UI_LEVELS = EFFORT_LEVELS.filter((level) => level !== 'off');
 
-    /** ① 工具注册态 → 三态 UI（§4.4.1）；DEGRADED 也如实显示（不静默）。 */
-    const REGISTRY_TEXT = {
-      REGISTERED: '● 开启',
-      UNREGISTERED: '○ 已关闭',
-      NOT_INSTALLED: '○ 未安装',
-      UNKNOWN: '… 检测中',
-      // ★ "环境降级"是内部判定结论；用户只需要知道"能用，但少了点什么"。
-      DEGRADED: '⚠ 开启（功能受限）',
-    };
+    /**
+     * 桌面端"没开"的机器可读归因码（三个读取器共用同一个码，语义 = 用户的下一步是同一个：
+     * 把 WorkBuddy 打开）：
+     *   · `launch/live-credits.js:47`（NO_DESKTOP）
+     *   · `launch/daily-checkin.js:36`（NO_DESKTOP）
+     *   · `launch/desktop-models.js:45`（NO_DESKTOP）
+     */
+    const DESKTOP_CLOSED = 'workbuddy_desktop_closed';
+    /** host 实时目录的来源前缀（`launch/desktop-models.js:53` 的 `LIVE_SOURCE` = `desktop-live:<端点>`）。 */
+    const LIVE_MODELS_SOURCE = 'desktop-live:';
+
+    /**
+     * 桌面端死活的**两向证据** —— 只读载荷里**已经有**的读数：不新增 host 字段、不做进程/端口探测
+     * （零反代铁律 CHARTER §3；C3 也不许本包执行任何进程出口）。
+     *
+     * ★★ 负向（`closed`）★★ 归因码只在 `error.code`：
+     *   `credits.error.code` / `checkin.error.code` 命中 `workbuddy_desktop_closed`
+     *   ⇒ 桌面端那一侧用不了（端点文件读不到，或文件在而端点已失效 —— 两种形态并成同一个码）。
+     *   ⚠️ `credits.source` / `checkin.source` 的**实测取值域是 `'live' | 'unavailable'`**
+     *   （`live-credits.js:135-152`、`daily-checkin.js:251-278`），归因码**不在** `source` 上。
+     *   本文件里旧有的 `source === 'workbuddy_desktop_closed'` 比较（见 creditsText / checkinBody 的注释）
+     *   在当前 host 下不可达；这里照旧把 `source` 一并认下来，只为兼容"旧 host 曾把码写进 source"的形状 ——
+     *   判据只在**命中该码**时才成立，不会因此多出任何结论。
+     *
+     * ★★ 正向（`live`）★★ 三条**互相独立**的通路，任一成立即"确实读到过桌面端"：
+     *   · `credits.ok === true`（读数来自一次成功的本机 IPC 读取；`stale` 只说明这次读得早，
+     *     不改变"读到过"这个事实——host 的 stale 分支仍给 `ok:true`，见 `live-credits.js:148-152`）；
+     *   · `checkin.ok === true`（同款通路，`daily-checkin.js:270-278`）；
+     *   · `modelsSource` 以 `desktop-live:` 开头 ⇒ 状态路由这一次用的是**实时目录**
+     *     （`routes/status/get.js:186-189` 的 `useLive` 要求 `available===true` 且目录非空；
+     *      `desktop-models.js:242-247` 里 `available:false` 时同样带这个 source，但那种读数不会被路由采用）。
+     *   ⚠️ 陈旧的正向读数会掩盖"此刻已经关掉"（host 在 `cached !== null` 时不把新错误码透给投影）——
+     *   这是 host 侧的已知边界，客户端**不猜**：有一条正向就按正向说，不做超越证据的否定。
+     *
+     * @param {object} status 状态载荷（调用方保证非 null）
+     * @returns {{closed: boolean, live: boolean}}
+     */
+    function desktopEvidence(status) {
+      /** 一条读数分支的归因码：优先 `error.code`，没有才回落 `source`（旧 host 形状）。 */
+      const codeOf = (branch) => {
+        if (branch === null || typeof branch !== 'object') return '';
+        const err = branch.error !== null && typeof branch.error === 'object' ? branch.error : null;
+        const code = err !== null && typeof err.code === 'string' && err.code !== '' ? err.code : '';
+        return code !== '' ? code : (typeof branch.source === 'string' ? branch.source : '');
+      };
+      const credits = status.credits === undefined ? null : status.credits;
+      const checkin = status.checkin === undefined ? null : status.checkin;
+      return {
+        closed: codeOf(credits) === DESKTOP_CLOSED || codeOf(checkin) === DESKTOP_CLOSED,
+        live: (credits !== null && credits.ok === true)
+          || (checkin !== null && checkin.ok === true)
+          || (typeof status.modelsSource === 'string' && status.modelsSource.startsWith(LIVE_MODELS_SOURCE)),
+      };
+    }
+
+    /**
+     * ①' harness 状态标签的**唯一**判定点（用户口径：状态要覆盖 未启动/已启动/未开启/工作中 之类的运行态）。
+     *
+     * ★ 词表与 `packages/plugin-opencode/lib/client.js` 的 `badgeOf()` 对齐（两边一起改）。
+     * ★ 按优先级取第一个成立者（①②③…即优先级）：
+     *   ① `config.enabled === false` ⇒ 未开启 —— **用户的决定**排在最前（哪怕在途还有作业：
+     *      那件事由任务块如实列出，徽标不替它说话）；
+     *   ①' 载荷没有 `config`（旧 host）时的兼容佐证 = `registry === 'UNREGISTERED'` **且探测已落地**：
+     *      host 只在 `want === false` 时落这个态，而 `want = enabled===true && (probe===null || installed)`
+     *      （`src/host/tools/index.js:69` / `:136-138`）⇒ 探测已落地还停在 UNREGISTERED，只能是总闸没开；
+     *   ② `registry === 'NOT_INSTALLED'` ⇒ 未安装（探测已落地且没找到：`tools/index.js:136-138`）；
+     *   ③ 载荷未到 / `registry` 不认识（含 `UNKNOWN`，host-protocol.js:26-32 的取值域之外）/
+     *      `probe === null`（探测**还没结论**）⇒ 检测中 —— 沿用既有 UNKNOWN 语义，不猜；
+     *   ④ `inFlight.length > 0` ⇒ 工作中（N）—— "正在干活"是最鲜活的事实；
+     *      ⚠️ 本包在途记录没有阶段字段（恒 `state:'running'`）⇒ 只说"工作中"，**不编**"任务下发中"；
+     *   ⑤ 桌面端没开的负向证据 ⇒ 未启动；⑥ `registry === 'DEGRADED'` ⇒ 功能受限（保留既有降级语义；
+     *      `registrationError` 原文照旧在诊断折叠里可核对，不因标签变化而丢）；
+     *   ⑦ 正向证据 ⇒ 已启动；⑧ 兜底 ⇒ 已开启。
+     *
+     * ★★ 否定纪律（本判定的底线）★★ 没有任何证据时**不许**宣称「已启动」：⑧ 只说"插件开着"这件事
+     *   （那是我们能确证的），"桌面端起没起来"要等 ⑤/⑦ 的证据。这也是为什么⑧ 用「已开启」而不是「已启动」。
+     *
+     * ⚠️ `registry` 单独**不足以**判定运行态：探测没落地时宿主会**乐观注册**（`tools/index.js:63-69`
+     *   `probe === null ? true`）⇒ 可能出现 `REGISTERED` 而桌面端压根没开。
+     *
+     * @param {object|null|undefined} status 状态载荷（未到达为 null/undefined）
+     * @returns {{slug: string, text: string}} slug 供 `dsh-wb-badge--<slug>` 区分语气
+     */
+    function badgeOf(status) {
+      const t = L.badge;
+      if (status === null || status === undefined || typeof status !== 'object') {
+        return { slug: 'unknown', text: t.unknown };
+      }
+      const registry = typeof status.registry === 'string' ? status.registry : '';
+      const probe = status.probe !== null && typeof status.probe === 'object' ? status.probe : null;
+      const config = status.config !== null && typeof status.config === 'object' ? status.config : null;
+      const enabled = config !== null && typeof config.enabled === 'boolean' ? config.enabled : null;
+      // ① 总闸关。
+      if (enabled === false) return { slug: 'off', text: t.off };
+      // ①' 旧 host 的兼容佐证（见头注 ①'）。
+      if (enabled === null && registry === 'UNREGISTERED' && probe !== null) {
+        return { slug: 'off', text: t.off };
+      }
+      // ② 未安装。
+      if (registry === 'NOT_INSTALLED') return { slug: 'not-installed', text: t.notInstalled };
+      // ③ 检测中：registry 不认识（含 ''/UNKNOWN/新枚举）或探测还没结论。
+      const conclusive = registry === 'UNREGISTERED' || registry === 'REGISTERED' || registry === 'DEGRADED';
+      if (!conclusive || probe === null) return { slug: 'unknown', text: t.unknown };
+      // ④ 工作中（在途 > 0）。
+      const inFlight = Array.isArray(status.inFlight) ? status.inFlight.length : 0;
+      if (inFlight > 0) return { slug: 'working', text: t.working(String(inFlight)) };
+      const evidence = desktopEvidence(status);
+      // ⑤ 未启动（负向证据，任一命中即成立）。
+      if (evidence.closed) return { slug: 'not-started', text: t.notStarted };
+      // ⑥ 功能受限（注册期降级）。
+      if (registry === 'DEGRADED') return { slug: 'degraded', text: t.limited };
+      // ⑦ 已启动（正向证据）。
+      if (evidence.live) return { slug: 'ready', text: t.ready };
+      // ⑧ 兜底：只说"开着"，不替桌面端作证。
+      return { slug: 'on', text: t.on };
+    }
 
     /** settings 快照状态文案（settingsScope 快照的 status 字段）。 */
     const SETTINGS_TEXT = {
@@ -478,9 +607,14 @@ window.__ModuleLoader__.load({
       '.dsh-wb-skeleton{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}' +
       // 写失败 Toast：警告级底纹 + 警告字色，点按关闭（role=alert，无障碍树可达）。
       '.dsh-wb-toast{display:flex;align-items:center;gap:8px;border-radius:8px;padding:8px 10px;background:var(--dsw-alias-fill-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-state-warn-primary);font-size:13px;line-height:1.5;cursor:pointer}' +
-      // 徽标做成低对比小胶囊：够看清三态即可，不与标题（15/600）抢视觉重量。
+      // 徽标做成低对比小胶囊：够看清状态即可，不与标题（15/600）抢视觉重量。
       '.dsh-wb-badge{flex:none;padding:1px 8px;border-radius:999px;white-space:nowrap;background:var(--dsw-alias-fill-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6}' +
-      '.dsh-wb-badge--registered{color:var(--dsw-alias-state-business-primary)}' +
+      // ★ 2026-10-16：slug 跟着新词表走（badgeOf）。颜色只给**有证据的结论** ——
+      //   business = 正在干活（工作中 / 已启动）；warn = 要用户动手（未启动 / 功能受限）；
+      //   其余（未开启 / 未安装 / 检测中 / 已开启）一律走基底的中性色：没有证据的状态不上色。
+      '.dsh-wb-badge--working{color:var(--dsw-alias-state-business-primary)}' +
+      '.dsh-wb-badge--ready{color:var(--dsw-alias-state-business-primary)}' +
+      '.dsh-wb-badge--not-started{color:var(--dsw-alias-state-warn-primary)}' +
       '.dsh-wb-badge--degraded{color:var(--dsw-alias-state-warn-primary)}' +
       // 配置行改栅格：标签列定宽 5.5em ⇒ 三行的控件左边缘对齐（原先 flex+min-width:9em 会因标签
       // 长度不同而错位）。提示/警告换行独占整行（grid-column:1/-1），不再挤在控件右边。
@@ -584,11 +718,13 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** ① 三态徽标（§4.4.1）。 */
+    /**
+     * ① 状态标签（运行态；判定见 `badgeOf`，词表见 DICT `badge`）。
+     * 类名 slug 供样式区分语气（`dsh-wb-badge--<slug>`）。
+     */
     function StatusBadge(props) {
-      const registry = typeof props.registry === 'string' ? props.registry : 'UNKNOWN';
-      const slug = registry.toLowerCase().replace(/_/g, '-');
-      return h('span', { className: 'dsh-wb-badge dsh-wb-badge--' + slug }, enumText(REGISTRY_TEXT, registry, L.shell.unknownText));
+      const decided = badgeOf(props === null || props === undefined ? null : props.status);
+      return h('span', { className: 'dsh-wb-badge dsh-wb-badge--' + decided.slug }, decided.text);
     }
 
     /** ② 开关行（U4）。 */
@@ -1646,7 +1782,7 @@ window.__ModuleLoader__.load({
                         h('span', { className: 'dsh-wb-card__summary-item', key: item.key }, item.text),
                       ),
                     ),
-                  h(StatusBadge, { registry, key: 'badge' }),
+                  h(StatusBadge, { status, key: 'badge' }),
                 ]),
                 effectiveOpen ? h('span', { className: 'dsh-wb-card__desc', key: 'desc' }, CARD_DESC) : null,
               ]),

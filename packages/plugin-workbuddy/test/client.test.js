@@ -253,6 +253,11 @@ function makeFakeDocument() {
  *
  * ★ 另：载荷里那份"命令行支持快照"（`cliModels`）已废弃，夹具不再提供，客户端也不再读。
  *
+ * ★ 2026-10-16：`config.enabled` 现在是卡头**状态标签**优先级①的输入（`lib/client.js` 的 `badgeOf`），
+ *   夹具默认给"插件开着"——与多数用例的 `scopeValue.enabled: true` 自洽（此前该字段无人消费，
+ *   夹具里的 `false` 与 `scopeValue.enabled: true` 是自相矛盾的）。要断言「未开启」的用例自己覆盖成 false，
+ *   否则这个默认值会把后面每一条标签判据悄悄压成"未开启"。
+ *
  * @param {object} [overrides] 覆盖载荷字段。
  *   ⚠️ 传了 `models` 而**没传** `cost` 时，`cost.models` 会**自动重算**为"覆盖后 models 里 id 为 m2 的那条
  *   = factor 0.06"——否则所谓"覆盖 models"会被默认 cost 悄悄贴上倍率，测试断言的就不是它自己写的那张表了
@@ -263,7 +268,7 @@ function statusPayload(overrides = {}) {
     pluginId: 'plugin-workbuddy',
     registry: 'REGISTERED',
     probe: { target: 'workbuddy', installed: true, reason: 'ok', resolvedPath: 'C:/wb/codebuddy', evidence: [], at: 1, method: 'no-exec' },
-    config: { enabled: false, model: '', effort: '' },
+    config: { enabled: true, model: '', effort: '' },
     // xhigh 刻意取非恒等映射（'extra-high'）—— 让"读 values[level]"与"印 canonical"在测试里可区分。
     effort: { canonical: [...EFFORT_LEVELS], values: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'extra-high', max: 'max' } },
     models: [
@@ -832,7 +837,7 @@ test('判据④：任务块 —— 对话标题 + 回执人话 + 在途数；编
   const tree = app.expand();
   const main = mainText(tree);
   const fold = foldText(tree);
-  assert.ok(main.includes('● 开启'), 'REGISTERED ⇒ ● 开启（头徽标，主视图）');
+  assert.ok(main.includes('◐ 工作中（2）'), '在途 2 件 ⇒ 状态标签「工作中（2）」（主视图；不是「已开启/已启动」）');
   assert.ok(main.includes('仍有 2 个任务在运行'), '在途作业数必须显示（主视图）');
   assert.ok(main.includes('任务对话：给 README 加一段'), '对话标题必须显示（主视图，用户自己的内容）');
   assert.ok(main.includes('回执：已收到'), '回执收到与否必须显示（主视图，人话）');
@@ -1452,27 +1457,208 @@ test('刷新按钮：点击触发状态路由再读（refreshNonce → effect �
 
 // ───────────────────────── R1 补强（测试有效性向审查后新增） ─────────────────────────
 
-test('R1 补强：S2/DEGRADED 徽标（三态之 S2 与降级可见性，不得漏显示）', async () => {
-  for (const [registry, expected, slug] of [
-    ['UNREGISTERED', '○ 已关闭', 'dsh-wb-badge--unregistered'],
-    ['DEGRADED', '⚠ 开启（功能受限）', 'dsh-wb-badge--degraded'],
-    ['NOT_INSTALLED', '○ 未安装', 'dsh-wb-badge--not-installed'],
+/**
+ * 卡头**状态标签**节点（`dsh-wb-badge`；供逐条断言 class slug）。
+ * 与 opencode 卡的 `dsh-oc-badge` 同款纪律：文案看词表、语气看 slug。
+ */
+function badgeNode(tree) {
+  const badge = findAll(
+    tree,
+    (n) => n.type === 'span' && String(n.props?.className ?? '').startsWith('dsh-wb-badge'),
+  )[0];
+  assert.ok(badge !== undefined, '卡头必须渲染状态标签（dsh-wb-badge）');
+  return badge;
+}
+
+test('状态标签（词表与 opencode 卡对齐）：未开启 / 未安装 / 检测中 / 功能受限 —— 文案 + slug 逐条钉死', async () => {
+  // ★ 2026-10-16：卡头从「注册态徽标」升级为**运行态**标签（判定 = lib/client.js 的 `badgeOf`）。
+  //   注册态只占其中两条：`NOT_INSTALLED` ⇒ 未安装（host: src/host/tools/index.js:136-138）、
+  //   `DEGRADED` ⇒ 功能受限（既有降级语义，注册失败原文仍在诊断折叠里）。
+  //   `UNKNOWN` / 不认识的枚举 ⇒ 检测中（沿用旧 UNKNOWN 语义：探测还没结论就别给结论）；
+  //   `UNREGISTERED` + 总闸关 ⇒ 未开启（优先级①：总闸关排最前）。
+  for (const [label, overrides, expected, slug] of [
+    ['NOT_INSTALLED（探测已落地、没找到）', { registry: 'NOT_INSTALLED' }, '○ 未安装', 'dsh-wb-badge--not-installed'],
+    ['DEGRADED（注册期降级）', { registry: 'DEGRADED' }, '⚠ 功能受限', 'dsh-wb-badge--degraded'],
+    ['UNKNOWN（探测还没结论）', { registry: 'UNKNOWN' }, '… 检测中', 'dsh-wb-badge--unknown'],
+    [
+      'REGISTERED + probe 仍为 null（宿主乐观注册的窗口期）⇒ 检测中',
+      { registry: 'REGISTERED', probe: null },
+      '… 检测中',
+      'dsh-wb-badge--unknown',
+    ],
+    [
+      '总闸关 + 在途 1 件（优先级① 高于④）',
+      { registry: 'REGISTERED', config: { enabled: false, model: '', effort: '' }, inFlight: [{ jobId: 'j-1' }] },
+      '○ 未开启',
+      'dsh-wb-badge--off',
+    ],
+    [
+      '旧 host 没有 config 字段：UNREGISTERED + 探测已落地 ⇒ 兼容佐证判定为总闸关',
+      { registry: 'UNREGISTERED', config: undefined, credits: null },
+      '○ 未开启',
+      'dsh-wb-badge--off',
+    ],
   ]) {
-    const app = await boot({ status: statusPayload({ registry }) });
+    const app = await boot({ status: statusPayload(overrides) });
     app.expand();
     app.flushEffects();
     await settle();
     const tree = app.expand();
-    assert.ok(mainText(tree).includes(expected), `${registry} ⇒ ${expected}（主视图，徽标不因折叠丢失）`);
-    const badge = findAll(tree, (n) => n.type === 'span' && String(n.props.className).startsWith('dsh-wb-badge'))[0];
-    assert.ok(String(badge.props.className).includes(slug), `class slug 必须为 ${slug}（'__'/'_' 会落空样式）`);
+    assert.ok(mainText(tree).includes(expected), `${label} ⇒ ${expected}（主视图，标签不因折叠丢失）`);
+    assert.ok(
+      String(badgeNode(tree).props.className).includes(slug),
+      `${label} ⇒ class slug 必须为 ${slug}（'__'/'_' 会落空样式）`,
+    );
   }
 });
 
-test('★ 文案纪律：宿主给出**表里没有的枚举值**时，说"未知"，不得把机器标识符印上卡', async () => {
+test('状态标签：在途 > 0 ⇒ ◐ 工作中（N）—— 数量取自载荷，且不因桌面端负向读数改口（优先级④ 高于⑤）', async () => {
+  // 依据：lib/client.js 的 `badgeOf` 优先级④（排在⑤未启动/⑥功能受限/⑦已启动之前）——
+  //   "正在干活"是当下最鲜活的事实；桌面端那一侧的读数（这里是 credits.error.code）此时不改口。
+  //
+  // ★ 本包**没有**「任务下发中」：在途记录里没有下发阶段信号（host 的 `inFlight[]` 恒 `state:'running'`，
+  //   src/host/config/runtime.js:328-349），没有信号就不编（opencode 卡有它是它自己有 phase）。
+  const closed = {
+    ok: false, source: 'unavailable', remain: null, ageMs: null, stale: true, unit: null,
+    error: { code: 'workbuddy_desktop_closed', message: 'connect ENOENT' },
+  };
+  const two = await boot({
+    status: statusPayload({
+      inFlight: [{ jobId: 'j-1', state: 'RUNNING', startedAt: 1 }, { jobId: 'j-2', state: 'RUNNING', startedAt: 2 }],
+      credits: closed,
+    }),
+  });
+  two.expand();
+  two.flushEffects();
+  await settle();
+  const tree = two.expand();
+  const main = mainText(tree);
+  assert.ok(main.includes('◐ 工作中（2）'), '★ 在途 2 件 ⇒ 「工作中（2）」（数量如实，来自载荷条数）');
+  assert.ok(String(badgeNode(tree).props.className).includes('dsh-wb-badge--working'), 'slug = working');
+  assert.equal(main.includes('已启动'), false, '有在途作业 ⇒ 不得同时宣称"已启动"');
+  assert.equal(main.includes('未启动'), false, '★ 在途作业在跑 ⇒ 桌面端负向读数不改口（优先级④ 高于⑤）');
+  assert.equal(main.includes('任务下发中'), false, '★ 本包没有下发阶段信号 ⇒ 不许出现"任务下发中"');
+
+  // 数量必须来自条数（不是写死的 1）：换 1 件就必须说 1。
+  const one = await boot({ status: statusPayload({ inFlight: [{ jobId: 'j-9' }] }) });
+  one.expand();
+  one.flushEffects();
+  await settle();
+  assert.ok(mainText(one.expand()).includes('◐ 工作中（1）'), '在途 1 件 ⇒ 「工作中（1）」');
+});
+
+test('状态标签：桌面端没开的负向证据 ⇒ ○ 未启动（credits/checkin 两条通路 + 负向优先 + 高于⑥）', async () => {
+  // 依据：lib/client.js 的 `badgeOf` 优先级⑤ = `desktopEvidence().closed`。
+  //   负向证据是三条直读桌面端的读数上的机器可读归因码（host 侧枚举 `workbuddy_desktop_closed`）：
+  //     · launch/live-credits.js:47  ⇒ payload.credits.error.code
+  //     · launch/daily-checkin.js:36 ⇒ payload.checkin.error.code
+  //   ⚠️ `credits.source` / `checkin.source` 的实测取值域是 `'live' | 'unavailable'`（host 只把它们
+  //      当投影态用）——归因码**只在 `error.code`；第三行是"旧 host 把码写进 source"的兼容判据。
+  const creditsClosed = {
+    ok: false, source: 'unavailable', remain: null, ageMs: null, stale: true, unit: null,
+    error: { code: 'workbuddy_desktop_closed', message: 'connect ENOENT \\.\\pipe\\wbipc-x' },
+  };
+  const checkinClosed = {
+    ok: false, source: 'unavailable', active: null, todayCheckedIn: null, streakDays: null,
+    dailyCredit: null, todayCredit: null, totalCredits: null, endTime: null, autoEnabled: true,
+    lastClaim: null, at: null, ageMs: null, stale: true,
+    error: { code: 'workbuddy_desktop_closed', message: 'connect ENOENT' },
+  };
+  for (const [label, overrides] of [
+    ['credits.error.code', { credits: creditsClosed }],
+    ['checkin.error.code', { checkin: checkinClosed }],
+    [
+      '旧 host：码落在 credits.source 上（兼容判据）',
+      { credits: { ok: false, source: 'workbuddy_desktop_closed', remain: null, ageMs: null, stale: true, unit: null, error: null } },
+    ],
+    // 负向优先：积分读到过（正向）+ 签到说桌面端没开 ⇒ 仍必须说未启动（不因为有一条正向就改口）。
+    ['正向与负向并存 ⇒ 负向优先', { checkin: checkinClosed }],
+    // ⑤ 高于⑥：DEGRADED（功能受限）且桌面端没开 —— 用户要做的动作是同一个（把桌面端打开）。
+    ['DEGRADED 同时桌面端没开 ⇒ 仍未启动', { registry: 'DEGRADED', credits: creditsClosed }],
+  ]) {
+    const app = await boot({ status: statusPayload(overrides) });
+    app.expand();
+    app.flushEffects();
+    await settle();
+    const tree = app.expand();
+    assert.ok(mainText(tree).includes('○ 未启动'), `${label} ⇒ ○ 未启动`);
+    assert.ok(
+      String(badgeNode(tree).props.className).includes('dsh-wb-badge--not-started'),
+      `${label} ⇒ slug = not-started`,
+    );
+  }
+  // ★ 不得破坏：状态区积分/签到行对 desktop_closed 的**既有文案**（标签只说总状态，不重复说一遍）。
+  const lines = await boot({ status: statusPayload({ checkin: checkinClosed }) });
+  lines.expand();
+  lines.flushEffects();
+  await settle();
+  const text = mainText(lines.expand());
+  assert.ok(text.includes('剩余积分：987.47 积分'), '积分行照旧（未命中桌面端为关的证据时不改口）');
+  assert.ok(text.includes('每日签到：WorkBuddy 桌面端未运行，暂时读不到签到状态'), '签到行的既有文案原样保留');
+});
+
+test('状态标签：正向证据 ⇒ ● 已启动（积分 / 签到 / 实时目录三条通路任一成立）；无证据不许宣称', async () => {
+  // 依据：lib/client.js 的 `badgeOf` 优先级⑦ = `desktopEvidence().live`。
+  //   三条通路互相独立（各自都是一次"确实读到过桌面端"的读数）：
+  //     · `credits.ok === true`（launch/live-credits.js:148-152）
+  //     · `checkin.ok === true`（launch/daily-checkin.js:270-278）
+  //     · `modelsSource` 以 `desktop-live:` 开头（routes/status/get.js:186-189 + desktop-models.js:53）
+  for (const [label, overrides] of [
+    ['credits.ok', {}],
+    [
+      'checkin.ok',
+      {
+        credits: null,
+        checkin: {
+          ok: true, source: 'live', active: true, todayCheckedIn: true, streakDays: 3,
+          todayCredit: 10, autoEnabled: true, lastClaim: null, at: 1, ageMs: 1_000, stale: false, error: null,
+        },
+      },
+    ],
+    ['modelsSource=desktop-live:', { credits: null, modelsSource: 'desktop-live:/v2/enterprises/personal/models' }],
+  ]) {
+    const app = await boot({ status: statusPayload(overrides) });
+    app.expand();
+    app.flushEffects();
+    await settle();
+    const tree = app.expand();
+    assert.ok(mainText(tree).includes('● 已启动'), `${label} ⇒ ● 已启动`);
+    assert.ok(
+      String(badgeNode(tree).props.className).includes('dsh-wb-badge--ready'),
+      `${label} ⇒ slug = ready`,
+    );
+  }
+});
+
+test('状态标签：没有任何桌面端证据 ⇒ ● 已开启（兜底），且**不得**宣称"已启动"（否定纪律）', async () => {
+  // ★ 这条是本判定的底线：registry=REGISTERED 只说明"插件自己注册上了"，与"桌面端起没起来"无关
+  //   （探测没落地时宿主会**乐观注册**：src/host/tools/index.js:63-69 `probe === null ? true`）。
+  //   没有证据时只说我们能确证的那件事——插件开着（「已开启」）；⑧ 兜底**不是**「已启动」。
+  const app = await boot({
+    status: statusPayload({
+      credits: null,
+      checkin: null,
+      inFlight: [],
+      modelsSource: 'unavailable:catalog-not-resolved',
+    }),
+  });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const tree = app.expand();
+  const main = mainText(tree);
+  assert.ok(main.includes('● 已开启'), '无证据 ⇒ 兜底「已开启」（只说插件开着）');
+  assert.ok(String(badgeNode(tree).props.className).includes('dsh-wb-badge--on'), 'slug = on');
+  assert.equal(main.includes('已启动'), false, '★★ 无证据时不许宣称"已启动"（宁少一个结论，不多一个没有依据的）');
+  assert.equal(main.includes('未启动'), false, '同理也不许反向推断"未启动"');
+});
+
+test('★ 文案纪律：宿主给出**表里没有的枚举值**时，说"检测中"，不得把机器标识符印上卡', async () => {
   // ★ 这条是被用户投诉逼出来的：旧写法是 `TABLE[value] ?? String(value)`。宿主加一个新枚举
   //   （或老插件遇到新枚举），卡片上就直接冒出 `PARTIAL_REGISTRATION` 这类标识符 ——
   //   用户看不懂，也判断不出"到底开没开"。未知就说未知；真值在载荷里，排查看日志。
+  // ★ 2026-10-16：状态标签侧的兜底词是「… 检测中」（与旧 UNKNOWN 语义一致），
+  //   设置状态 / 参数接受度两处仍说「未知」—— 逐处断言，不用模糊计数（"倍率未知"也含"未知"两字）。
   const app = await boot({
     scopeOptions: { status: 'warming_up', writable: false },
     status: statusPayload({
@@ -1483,18 +1669,20 @@ test('★ 文案纪律：宿主给出**表里没有的枚举值**时，说"未�
   app.expand();
   app.flushEffects();
   await settle();
-  const text = textOf(app.expand());
+  const tree = app.expand();
+  const text = textOf(tree);
   for (const leaked of ['PARTIAL_REGISTRATION', 'warming_up', 'maybe_rejected']) {
-    assert.equal(text.includes(leaked), false, `★ 未知枚举 ${leaked} 不得上屏（宁可说"未知"，含折叠）`);
+    assert.equal(text.includes(leaked), false, `★ 未知枚举 ${leaked} 不得上屏（宁可说"检测中/未知"，含折叠）`);
   }
-  // ★ 徽标 / 设置状态 / 参数接受度（折叠）三处都应说"未知"。
-  assert.equal(text.split('未知').length - 1 >= 3, true, '徽标 / 设置状态 / 参数接受度三处都应说"未知"');
+  assert.ok(mainText(tree).includes('… 检测中'), '不认识的 registry ⇒ 状态标签说"检测中"（沿用 UNKNOWN 语义）');
+  assert.ok(text.includes('设置：未知'), '设置快照 status 不认识 ⇒ 仍说"未知"');
+  assert.ok(foldText(tree).includes('参数是否被接受：未知'), '参数接受度 verdict 不认识 ⇒ 仍说"未知"（折叠）');
   // 负控：兜底只影响**不认识的值**，认识的照旧逐字显示（否则这条测试是空转的）。
-  const ok = await boot({ status: statusPayload({ registry: 'REGISTERED' }) });
+  const ok = await boot({ status: statusPayload({ registry: 'NOT_INSTALLED' }) });
   ok.expand();
   ok.flushEffects();
   await settle();
-  assert.ok(mainText(ok.expand()).includes('● 开启'), '已认识的枚举仍按表显示');
+  assert.ok(mainText(ok.expand()).includes('○ 未安装'), '已认识的枚举仍按词表显示');
 });
 
 test('★ C 组上屏：registrationError 有值 ⇒ 只进诊断折叠；老 host 缺该字段不得渲染空行（正/负控制对）', async () => {
@@ -1519,7 +1707,7 @@ test('★ C 组上屏：registrationError 有值 ⇒ 只进诊断折叠；老 ho
     '★ DEGRADED 的注册期成因必须在折叠里可核对',
   );
   assert.ok(!main.includes('最近一次启动：退出码'), '没有 lastRun 记录就不得凭空造一行启动信息');
-  assert.ok(main.includes('⚠ 开启（功能受限）'), '徽标仍按 registry 显示（本字段不抢状态）');
+  assert.ok(main.includes('⚠ 功能受限'), '状态标签仍按 registry 说"功能受限"（注册失败原文不抢镜头，去折叠里看）');
 
   const legacy = await boot({ status: statusPayload({ registry: 'DEGRADED' }) }); // 老 host：字段缺席
   legacy.expand();
@@ -1527,7 +1715,7 @@ test('★ C 组上屏：registrationError 有值 ⇒ 只进诊断折叠；老 ho
   await settle();
   const legacyFold = foldText(legacy.expand());
   assert.ok(!legacyFold.includes('duplicate tool registration'), '字段缺席 ⇒ 折叠里也不加（不把"没有数据"读成"有故障"）');
-  assert.ok(mainText(legacy.expand()).includes('⚠ 开启（功能受限）'), '徽标仍按 registry 显示');
+  assert.ok(mainText(legacy.expand()).includes('⚠ 功能受限'), '状态标签仍按 registry 显示');
 });
 
 test('R1 补强：不可写快照（unavailable/writable=false）⇒ 三控件全置灰 + 只读文案', async () => {
@@ -1605,13 +1793,19 @@ test('R1 补强：stale 响应竞态 —— 刷新后旧响应不得覆盖新值
         const payload = await second; // 第二次：慢
         return { ok: true, status: 200, json: async () => payload };
       }
-      return { ok: true, status: 200, json: async () => statusPayload({ registry: 'UNREGISTERED' }) };
+      // 第三次（快）：总闸关 + 未注册 ⇒ 状态标签应是「未开启」（与第 1 次的「已启动」、旧响应的
+      // 「功能受限」都不同 —— 三个响应各有各的标签，这条竞态才判别得动）。
+      return {
+        ok: true,
+        status: 200,
+        json: async () => statusPayload({ registry: 'UNREGISTERED', config: { enabled: false, model: '', effort: '' } }),
+      };
     },
   });
   app.expand();
   app.flushEffects();
   await settle();
-  assert.ok(textOf(app.expand()).includes('● 开启'), '前提：首次加载已完成');
+  assert.ok(textOf(app.expand()).includes('● 已启动'), '前提：首次加载已完成（REGISTERED + 读到过桌面端）');
   const clickRefresh = () =>
     findAll(app.expand(), (n) => n.type === 'button' && n.props.className === 'dsh-wb-card__refresh')[0].props.onClick();
   clickRefresh(); // 第二次 fetch（慢）开始
@@ -1621,11 +1815,11 @@ test('R1 补强：stale 响应竞态 —— 刷新后旧响应不得覆盖新值
   app.expand();
   app.flushEffects();
   await settle();
-  assert.ok(textOf(app.expand()).includes('○ 已关闭'), '新响应必须生效');
+  assert.ok(textOf(app.expand()).includes('○ 未开启'), '新响应必须生效');
   resolveSecond(statusPayload({ registry: 'DEGRADED' })); // 旧响应此后才到
   await settle();
-  assert.ok(textOf(app.expand()).includes('○ 已关闭'), '旧响应必须被丢弃');
-  assert.ok(!textOf(app.expand()).includes('环境降级'), '旧响应不得覆盖');
+  assert.ok(textOf(app.expand()).includes('○ 未开启'), '旧响应必须被丢弃');
+  assert.ok(!textOf(app.expand()).includes('功能受限'), '旧响应不得覆盖（DEGRADED 的标签是「功能受限」）');
 });
 
 test('R1 补强：写失败（scope.set reject）⇒ Toast 如实说出来（不静默吞掉）', async () => {
@@ -1660,7 +1854,7 @@ test('收纳：默认展开 —— 标题/徽标/描述可见，内容区即渲�
   assert.equal(toggle.props['aria-label'], '收起设置: WorkBuddy');
   const text = textOf(tree);
   assert.ok(text.includes('WorkBuddy'), '标题可见');
-  assert.ok(text.includes('● 开启'), '徽标可见（状态不因收纳丢失）');
+  assert.ok(text.includes('● 已启动'), '状态标签可见（状态不因收纳丢失）');
   assert.ok(text.includes('在这里选 WorkBuddy 的模型、看剩余积分'), '描述行（官方 PluginCard 槽位）');
   assert.equal(
     findAll(tree, (n) => n.props && n.props.className === 'dsh-wb-card__body').length,
@@ -2397,7 +2591,7 @@ test('收纳：收起态只留一行摘要 —— 描述行不占位、三值摘
     0,
     '内容区仍然消失',
   );
-  assert.ok(text.includes('● 开启'), '★ 徽标仍在（能不能跑是收起时最该看到的一件事）');
+  assert.ok(text.includes('● 已启动'), '★ 状态标签仍在（能不能跑是收起时最该看到的一件事）');
   // ★ 三值摘要：当前模型 · 推理强度 · 剩余积分。
   assert.deepEqual(
     summaryItems(collapsed),
