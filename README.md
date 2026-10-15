@@ -3,6 +3,9 @@
 DshAgentHub 把本机 agent（首个 WorkBuddy）变成看得见、可调度、可观测的执行方。全程同机，不跨网。
 
 > **项目最高准则：[CHARTER.md](./CHARTER.md)** —— 2026-10-15 项目定义更新：dsh 作为大脑，向本机桌面 harness 下发可视化任务（八步流程：创建对话 → 工作目录 → 模型 → 思考强度 → 下发 → 会话复用 → 回执 → 审批）。凡本仓库文档与该准则冲突处，以 CHARTER 为准，并登记待修。
+>
+> 一 harness 一包：`packages/plugin-workbuddy`（WorkBuddy 桌面端，下文能力面以它为准）与
+> `packages/plugin-opencode`（OpenCode 桌面端，2026-10-15 落地，见包内 README 与 `04-docs/CHECK-20261015-opencode.md`）。
 
 ---
 

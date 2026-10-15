@@ -1,0 +1,40 @@
+{
+  "name": "dsh-plugin-opencode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把本机 OpenCode 桌面端暴露成 dsh 的模型面工具：经其自带本机 HTTP+SSE 服务完成「创建对话→目录/模型/档位→下发→复用→回执→审批」全流程（零反代、零 CLI、全部可视化）。",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/index.js", "lib/client.js", "src", "cordis.patch.yml", "README.md"],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-jobs": ">=0.1.5-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-system-prompt": ">=0.1.5-rc.2 <0.3.0"
+  },
+  "dsh": {
+    "bundle": { "patch": "cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    },
+    "engines": { "dsh": ">=0.1.5-rc.2" },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible"
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+# dsh-plugin-opencode — 把本机 OpenCode 桌面服务暴露为模型可见的 dsh 工具。
+#
+# 【patch 语义铁律】（实测：dsh-base/cordis.patch.yml 头注释）
+#   "A patch replaces the targeted row's whole `config` rather than merging into it"
+#   "the last write winning per row"（行级后写覆盖）
+#   ⇒ 本文件【只 insert 自己的行】，不覆写任何既有行。
+#
+# 【E-10】`remove` 不是合法 patch 动词；条件开关用 `disabled: true` 或 `!!js <expr>`。
+#
+# 【U4】本文件里的 `disabled` 是【加载期】开关（整个插件不进宿主）；
+#   「一程序一开关」的【运行期】开关由 host 端 ctx.tools.register 的 effect-scoped
+#   注销实现（enabled !== true ⇒ 一处都不注册），不靠本文件的表达式。
+#
+# 【通道】opencode 桌面端自带本机服务（`http://127.0.0.1:<随机端口>`，注册于
+#   `~/.local/state/opencode/service.json`：{id, version, url, pid, password}）。
+#   插件是**该服务自己的 HTTP+SSE 客户端**（HTTP Basic: opencode:<password>）——
+#   **不是**反代、不监听任何端口、不代管模型路由（CHARTER §3 零反代铁律）。
+#   事实出处：00-recon/OPENCODE-LOCAL-RECON-20261015.md（含 2026-10-15 live 探针 §11）。
+
+- insert:
+    # 行 id 必须与 shared/constants.js 的 NS 一致（loader 行 id 即 settings namespace，
+    # 否则 `settings.update()` 抛 `No configurable plugin entry`）。
+    - id: dsh-plugin-opencode
+      name: 'dsh-plugin-opencode'
+      config:
+        # ── 配置基线（用户改写在 ~/.dsh/settings.yaml 的同名 namespace 下）──
+        # ★★ 授权总闸：`enabled !== true` ⇒ 工具面与轮询面一处都不注册。
+        #   本行取值必须与 schema 默认值逐字一致（test/host.test.js 的同步断言会查这一行）。
+        enabled: false
+        # 默认模型引用，'providerID/id'（'' = 未指定 ⇒ 建会话不带 model）。
+        model: ''
+        # 推理档位（'' = 模型默认档）。值域来自服务实况（/api/model 的 variants[].id）。
+        variant: ''
+        # 新建会话的默认工作目录（'' = 不上报，用服务端默认）；会话复用时不生效。
+        workspace: ''
+        # 用户显式绑定的会话 id（ses_…；'' = 没绑）。绑定后只下发到这一条。
+        boundSessionId: ''
+        # 服务发现目录覆盖（'' = 自动发现 state → config 两处）。
+        serviceDir: ''
+        # 服务基址覆盖（'' = 用 service.json 的 url）。鉴权始终来自 service.json。
+        baseUrl: ''
+        # 单轮等待上限（毫秒，默认 15 分钟；超时不解除任务，只如实回传在途态）。
+        waitTimeoutMs: 900000
+        # 会话映射落盘位（插件自行写入；schema 用 dict(any) ⇒ 手改坏记录不致整份拒收）。
+        sessions: {}
+        # ★ 档位数据表（数据，不是旗标）：模型 → 档位域覆盖/补充；{} = 完全用服务实况。
+        #   真实消费者 = 状态路由的 `variantCapability(config)`（红线探针按包指名）。
+        launch:
+          variantValues: {}
