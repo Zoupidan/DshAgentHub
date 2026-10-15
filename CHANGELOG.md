@@ -6,72 +6,33 @@
 
 ### 本次更新的目的
 
-本版把「一个大脑、多个桌面 harness」落成完整形态。**OpenCode 接入随本版交付**（第二个桌面 harness：
-八步契约映射到桌面端本机 HTTP 服务，四件工具 + 审批面）；设置页里两个 harness 卡片合并为**「Harness 接入」**
-父条目（一 harness 一标签页）；卡片抬头给出**运行态状态标签**（未开启 / 未探测 / 未启动 / 已启动 / 工作中 /
-任务下发中…）；opencode 任务**四态如实**（下发中 / 执行中 / 压缩中¹ / 已结束——无终态回执绝不算已结束）；
-两包系统提示词声明**并发预算**（单 harness ≤3 / 合计 ≤4）；WorkBuddy 完成**同会话两轮复用**真机闭环。
-部署方式不变：junction + 重启 DSH。
-
-> ¹「压缩中」当前无可观察信号 ⇒ 如实留空（补信号最小路径见 `packages/plugin-opencode/src/host/launch/in-flight-states.js` 文件头）。
+引入第二个桌面 harness（OpenCode）；设置页里的 harness 卡片合并为「Harness 接入」的标签页；
+卡片与任务状态更直观、更如实。部署方式不变：junction + 重启 DSH。
 
 ### 变更（Changed）
-- **项目定义更新（2026-10-15）**：dsh 作为大脑，向本机桌面 harness 下发「可视化任务」——拒绝任何形式反代、全部可视化；流程契约八步（创建对话 / 工作目录 / 模型 / 思考强度 / 下发 / 会话复用 / 回执 / 审批）。新增 [`CHARTER.md`](./CHARTER.md)（最高准则，含主理人原话存档）与 [`AGENTS.md`](./AGENTS.md)（agent 操作手册）；README 顶部挂准则入口。
-- **发布策略：不再提供打包发布版**（Owner 决策 2026-10-10）。GitHub 三个 Release 与版本
-  tag（v0.2.1/0.2.2/0.2.3）已删除，本地 release zip 已清；仓库无打包/发布工作流。部署
-  唯一路径 = junction 指向本仓库 + 重启 DSH。README「发布」节同步改写。
+- **项目定义更新**：新增 [`CHARTER.md`](./CHARTER.md)（项目最高准则）与 [`AGENTS.md`](./AGENTS.md)（agent 操作手册）。
+- **发布策略**：只提供源码，不提供打包发布版；部署 = junction 指向本仓库 + 重启 DSH。
 
 ### 修复（Fixed）
-- **fix(dev): 依赖链接适配 DSH 0.2.0-rc.2 桌面端布局（asar 物化）** —— 桌面端更新后框架包（cordis / schemastery /
-  dsh-tools …）被打进 `resources\app.asar`，旧的 `<Roaming>\<dist>\dependencies\…` 明文 scope 消失 ⇒ 仓库测试整组断链
-  （10 文件 ERR_MODULE_NOT_FOUND、67 题 skip）。新增 `tools/dev/extract-dsh-framework.mjs`（离线把 asar 的
-  `dsh/node_modules` 12,412 文件 / 350.1 MB 物化到 `%LOCALAPPDATA%\dsh-framework-scope\<version>\`，幂等、
-  `--force`/`--check`）；`link-dsh-deps` 找不到完整 scope 时自动调用它，候选来源扩为「显式 > 抽取体 > 旧明文布局」，
-  并修掉 `findScope()` 缺 `continue` 把死路径当 fallback 的缺陷。修复后 `test:host` 603/603、`test:client` 83/83、四红线全绿。
-- **fix(team): dsh 智能团队界面整体消失的根因修复** —— `cordis.patch.yml` 的
-  `dsh-session-persistence-jsonl-team` 条目漏写 `config.root`，撞
-  `dsh-session-persistence-jsonl` 的 `root: z.string().required()`（boot 日志实锤
-  `ValidationError: $.root missing required value`）。team 栈依赖持久化会话存储才激活
-  ⇒「智能团队」UI 整个不见。补 `root: !!js dshHomePath('sessions')`（与 dsh-base 基础条目
-  同库，团队成员本就是 Lead 会话树下的子会话）。缺陷自初始提交即在场，DSH 升级后
-  schema 校验变严格才暴露。
-- **fix(workbuddy): 续接 / 委派权限 / 清理三处真源修复** —— `resume:true` 直建续接打通（不再误回退点火）；
-  委派权限读回改直读真源、`lastRun` 同源修复，**读回失败显式标注**（不猜、不静默）；`workbuddy_purge`
-  精准清理面。见提交 `341c593` / `5a579e6`。
-- **fix(workbuddy): 零进程出口清账 + 测试隔离/不变量重构** —— 死代码与歧义出口清理、测试夹具与真库
-  隔离护栏加固（提交 `266869d`）。
+- **fix(dev)**：适配 DSH 桌面端的依赖打包布局变化，恢复本仓库测试链路（`npm run deps:extract` 可重建）。
+- **fix(team)**：修复「智能团队」界面整体消失的问题（会话持久化配置缺失 root 项）。
+- **fix(workbuddy)**：委派权限读回改读真源（读回失败显式标注，不再猜测）；`workbuddy_purge` 精准清理；死代码清理与测试隔离加固；`resume:true` 续接既有对话打通（不再误回退新开）。
 
 ### 新增（Added）
-- **OpenCode 接入（`packages/plugin-opencode` v0.1.0）**：第二个桌面 harness —— 八步契约映射到桌面端
-  **本机 HTTP 服务**（`service.json` 地址 + 口令；零 CLI、零反代、不代启停桌面端）；模型面工具 4 件
-  （`opencode_run` / `opencode_status` / `opencode_approvals` / `opencode_purge`）；审批面支持列待批 +
-  回复决定（`permission.reply`）。
-- **插件使用说明 `packages/plugin-workbuddy/README.md`**（此前 `files` 声明了却从不存文件，
-  本次新建）：工具用法、智能团队用法（`spawn_teammate(name="workbuddy",
-  description="WorkBuddy · …")` → 成员调 `workbuddy_run` 下发）、硬约束（唯一桌面端通道 /
-  零 CLI / 零反代）与状态查看方式。
-- **设置「Harness 接入」父条目（hub 合并）**：新包 `packages/plugin-harness-hub` ——
-  设置导航栏里 WorkBuddy / OpenCode 卡片不再各占一条，收进同一父条目的两个子标签
-  （子槽 `settings.harness-hub.tab`；标签位次 10/20）。两包注册迁移后，DSH 桌面端**真机目验通过**
-  （父条目可见 / 两标签可切换 / 面板互斥渲染 / 零崩溃日志）；「槽未声明时静默不发生」⇒ 壳不在场时父是唯一入口、不留孤儿。
-- **卡片状态标签（运行态如实呈现）**：opencode 六态 `未开启/未探测/未启动/已启动/工作中/任务下发中`；
-  workbuddy 八态 `未开启/未安装/检测中/工作中（N）/未启动/功能受限/已启动/已开启`（桌面端死活以
-  credits/checkin 的 `workbuddy_desktop_closed` 归因码为负向证据、ok/live 为正向证据；**无证据不宣称
-  「已启动」**）。词表两卡对齐，由双侧测试钉住。
-- **opencode 任务四态如实**：在途逐条 `下发中/执行中`（+亲和键/已等待）；`opencode_status` 在途明细 +
-  lastRun 无终态回执 ⇒ `NOT finished` 告警；「压缩中」当前无可观察信号 ⇒ **如实留空**（补信号最小路径
-  登记于 `src/host/launch/in-flight-states.js` 文件头）；硬红线：超时/中止不判成败、**无终态回执 ≠ 已结束**
-  （工具面 + 卡片面双呈现，测试钉死）。
-- **并发预算句**：两包系统提示词（就绪/可用分支）声明「单 harness ≤3、全部 harness 合计 ≤4（dsh 协调）」；
-  数字断言 + 突变自检证明断言有判别力。
-- **WorkBuddy 同会话两轮复用真机闭环**：Round1 队列点火建会话（暗号）→ Round2 **CDP 追发同一条对话**
-  复述暗号；落库恰 1 行会话、`updated_at` 推进。
+- **OpenCode 接入**（`packages/plugin-opencode`）：把本机 OpenCode 桌面端变成 dsh 的模型面工具 ——
+  创建 / 复用可见会话、下发、等待回执、审批（列待批 + 回复决定）、精准清理；
+  工具：`opencode_run` / `opencode_status` / `opencode_approvals` / `opencode_purge`。
+- **设置「Harness 接入」父条目**：WorkBuddy 与 OpenCode 卡片合并为一个导航条目下的两个标签页，
+  各自独立配置、独立状态。
+- **卡片状态标签**：卡片抬头一眼显示 harness 当前状态（未开启 / 未启动 / 已启动 / 工作中 / 任务下发中 等）。
+- **任务状态如实呈现**：在途任务逐条显示进度（下发中 / 执行中）与等待时长；等待超时或有任务未收到
+  最终回执时，界面与工具都会明确提示「未结束」，不会误报为已完成。
+- **并发预算**：系统提示词声明单个 harness 至多 3 个在途任务、全部 harness 合计至多 4 个（由 dsh 协调）。
+- **WorkBuddy 同会话续聊**：`resume:true` 续接既有对话打通；同会话两轮复用已在真机验证。
 
 ### 维护（Chore）
-- 红线覆盖表登记 `plugin-opencode` 探针行（提交 `2575d32`）；broker 取消支路探针注入补测（真机 endpoint
-  会留不灭 Pipe 句柄，提交 `35f1a95`）；DSH profile 工具面修复记录（preset-partner 默认预设，提交 `f6c6082`）。
-- `test:host` 清单对齐磁盘：移除已删的 `gateway-portmap.test.js`、补入 `status-anti-prune.test.js`（38 个文件全在盘）。
-- 门禁挂载与终验：`test:client` 纳入 hub 卡片测试、`test:host` 纳入 opencode `runtime-locks`；本轮三闸 = 红线 4/4 + 宿主 682/682 + UI 139/139（2026-10-15 深夜收口轮）。
+- 测试门禁补齐：新增 `runtime-locks` 与 hub / OpenCode 两个卡片测试的挂载（`test:host` / `test:client`）。
+- 终验：红线 4/4 · 宿主 682/682 · UI 139/139。
 
 ## [0.3.0] - 2026-10-10
 

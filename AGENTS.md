@@ -10,7 +10,7 @@
 
 ## 2. 仓库结构
 
-- `packages/plugin-<harness>/` — 一 harness 一包（现有：`plugin-workbuddy`；攻坚中：`plugin-opencode`）
+- `packages/plugin-<harness>/` — 一 harness 一包（现有：`plugin-workbuddy`、`plugin-opencode`；设置合并外壳：`plugin-harness-hub`）
 - `00-recon` → `01-prd` → `02-design` → `03-adr` → `04-docs` → `05-construction` — 文档流水线（见 `.gitignore`）
 - `tools/` — CI 红线、lint、dev 脚本
 - 入库原则：用户定义、红线、交付文档、源码、测试入 git；侦察证据、设计草稿、施工日志通常本地保存
