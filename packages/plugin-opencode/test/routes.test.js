@@ -205,6 +205,10 @@ test('availabilityText：三态不撒谎（关闭 / 探测中 / 服务缺失 / �
   assert.match(ready, /is available/);
   assert.match(ready, /model not set — choosing one is your call/);
   assert.match(ready, /reasoning variant "high"/);
+  // ★ 2026-10-15 并发预算：就绪态必须写明"单 harness ≤ 3、全 harness 合计 ≤ 4"。
+  //   两条断言钉的是**角色—数字配对**（删句、改数字、两个数字对调，任一都会红），不是脆弱的格式细节。
+  assert.match(ready, /at most 3 tasks in flight for this harness/, '就绪态必须写明单 harness 并发预算（≤ 3）');
+  assert.match(ready, /at most 4 across all harnesses/, '就绪态必须写明全部 harness 的合计预算（≤ 4）');
 
   const failed = availabilityText({
     currentConfig: () => ({ enabled: true }),

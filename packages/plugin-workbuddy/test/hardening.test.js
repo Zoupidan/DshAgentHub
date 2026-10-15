@@ -643,7 +643,12 @@ test('目标③：registry 未登记/缺失/形状不对 ⇒ 文案绝不落 ava
 
   // 正向控制（判别力）：两个**已登记可用**的态必须落 available —— 否则"恒不 available"的坏实现也能骗过下面全部断言。
   for (const okState of [states.REGISTERED, states.DEGRADED]) {
-    assert.match(text(okState), /WorkBuddy delegation is available/, `${okState} 应落可用分支`);
+    const available = text(okState);
+    assert.match(available, /WorkBuddy delegation is available/, `${okState} 应落可用分支`);
+    // ★ 2026-10-15 并发预算：可用分支必须同时写明单 harness（≤ 3）与全 harness 合计（≤ 4）。
+    //   钉的是**角色—数字配对**：删句、改数字、两个数字对调，任一都会红。
+    assert.match(available, /at most 3 tasks in flight for this harness/, `${okState} 必须写明单 harness 并发预算（≤ 3）`);
+    assert.match(available, /at most 4 across all harnesses/, `${okState} 必须写明全部 harness 的合计预算（≤ 4）`);
   }
   // 未确认/未登记/缺失/形状不对：一律**不得**落可用分支（保守兜底优于"假装能用"）。
   //   注：断言刻意只钉"绝不 available"，不钉兜底那一句的具体措辞（措辞随分支演进，可用性结论不能）。

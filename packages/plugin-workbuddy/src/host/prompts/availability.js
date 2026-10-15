@@ -30,6 +30,11 @@
  *   事实（其中"子智能体面"一块 377、"该谁选模型"一块 398，各自带 6–8 条，压到 200 等于删事实）。
  *   再往下只剩两条路 —— 删事实（违反本节纪律），或把信息挪到**不每回合付钱**的地方（工具参数描述另算，
  *   见 `tools/run.js` 的 `MODEL_ARG_DESCRIPTION`）。两者都超出本节授权 ⇒ 如实超标并在此记账。
+ *
+ * ★ 2026-10-15 并发预算句（`CONCURRENCY_BUDGET_HINT`，本句 157 字符，只挂可用分支）：单 harness ≤ 3 个
+ *   在途任务、全部 harness 合计 ≤ 4（dsh 协调）。上文 1394 基线（2026-10-01）在其后的追加
+ *   （10-02/10-03/10-04）中未再逐句记账；实测同款组合（可用 + 未固定模型 + 配置可读 + 两个 CDP 总闸关）
+ *   2610 → 2767 字符。
  */
 import { REGISTRY_STATES } from '../config/constants.js';
 import { REASON_CODES, REASON_TEXT, isFailureCode } from '../launch/reason-codes.js';
@@ -205,6 +210,19 @@ function debateHint(runtime) {
     + 'stop as soon as you agree or the point is settled — do not spend the whole budget by default. Every '
     + 'round is a real WorkBuddy run and costs real credits.';
 }
+
+/**
+ * 并发预算（★ 2026-10-15 新增；每回合求值，且**只出现在可用分支**）。
+ *
+ * 事实：dsh 是协调方 —— 单个 harness 至多 3 个在途任务，全部 harness 合计至多 4 个。这句是给下发模型的
+ * **硬约束**：不说，模型只知道"能下发"，不知道"能同时下发几个"，于是会连环叠作业；超发即使被大脑侧拦住，
+ * 模型拿到的也只是一串不必要的拒绝。
+ *
+ * 为什么只挂可用分支：OFF / 未探测完 / 未安装（以及注册失败）几支里根本没有可下发的对象，写上就是
+ * 每回合一笔死钱（本节纪律：本节每回合都进系统提示 ⇒ 追加句只许说当下**会被用到**的话）。
+ */
+const CONCURRENCY_BUDGET_HINT = ' Concurrency budget: at most 3 tasks in flight for this harness, '
+  + 'and at most 4 across all harnesses (the dsh brain coordinates the total) — do not exceed it.';
 
 /**
  * 子智能体面的存在与形状（★ 2026-10-01 新增；每回合求值）。
@@ -496,6 +514,7 @@ export function availabilityText(runtime) {
       'WorkBuddy delegation is available: use workbuddy_run to delegate a coding task as a background job '
       + '(read progress with job_output, cancel with job_kill), and workbuddy_status to inspect the local '
       + 'WorkBuddy install and the most recent run.'
+      + CONCURRENCY_BUDGET_HINT
       + subagentRouteHint() + debateHint(runtime) + continuityHint(runtime) + cdpIgnitionHint(runtime) + degraded
       + overrideHint(runtime) + lastFailureHint(runtime)
     );

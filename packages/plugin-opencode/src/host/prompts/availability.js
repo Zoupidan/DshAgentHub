@@ -48,6 +48,13 @@ export function availabilityText(runtime) {
       + 'Read progress with job_output; cancel with job_kill — cancelling only stops watching, the task keeps '
       + 'running in the visible session.',
     );
+    // ★ 2026-10-15 并发预算（模型可见文本）：dsh 是协调方 —— 单 harness 至多 3 个在途任务，全部 harness
+    //   合计至多 4 个。只写在**就绪**这一支：关闭 / 未探测完 / 服务缺失三支里没有可下发的对象，
+    //   写预算就是每回合白付的 token（本节纪律：只讲读得出来的话，本节每回合都进系统提示）。
+    lines.push(
+      'Concurrency budget: at most 3 tasks in flight for this harness, and at most 4 across all harnesses '
+      + '(the dsh brain coordinates the total) — do not exceed it.',
+    );
     const model = typeof cfg.model === 'string' ? cfg.model : '';
     const variant = typeof cfg.variant === 'string' ? cfg.variant : '';
     lines.push(
