@@ -337,12 +337,23 @@ function buildProbeInput({ launchKeys, topKeys, launchWitness, useCall, workspac
  * 不改这里的结果是这条红线**误报**（"无法加载 argv.js" ⇒ FAIL），
  * 而"顺手把它关掉"更糟 —— 那等于把一条红线删掉。所以探针改为**按包指名真实消费者**。
  * `call(mod, input)` 的返回值会被 JSON 序列化后拿哨兵值比对，与原探针口径一致。
+ *
+ * ★★ 2026-10-15 追加 `plugin-opencode` 行（论证见 04-docs/REPORT-20261015-redline-probe-target-opencode.md）★★
+ * 新包没有 argv.js（通道 = 桌面端本机 HTTP API，零 CLI）；它的 `launch` 表里只有
+ * `variantValues`（模型 → 推理档位域的数据表），真实消费者 = 状态路由导出的
+ * `variantCapability(config, serviceValues)`：服务实况优先、数据表兜底，
+ * 两者都进返回值 ⇒ 哨兵可按同一口径验证"这个键真的被读走了"。
  */
 const PROBE_TARGETS = {
   'plugin-workbuddy': {
     module: ['src', 'host', 'routes', 'status', 'get.js'],
     export: 'effortCapability',
     call: (mod, cfg) => mod.effortCapability(cfg),
+  },
+  'plugin-opencode': {
+    module: ['src', 'host', 'routes', 'status', 'get.js'],
+    export: 'variantCapability',
+    call: (mod, cfg) => mod.variantCapability(cfg),
   },
 };
 
