@@ -32,7 +32,16 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { NS, PACKAGE_NAME, ROUTE_DIAGNOSTICS, ROUTE_STATUS, TOOL_APPROVALS } from '../src/shared/constants.js';
+import {
+  HUB_TAB_ID,
+  HUB_TAB_ORDER,
+  HUB_TAB_SLOT,
+  NS,
+  PACKAGE_NAME,
+  ROUTE_DIAGNOSTICS,
+  ROUTE_STATUS,
+  TOOL_APPROVALS,
+} from '../src/shared/constants.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = join(HERE, '..');
@@ -518,8 +527,9 @@ async function boot({ scopeValue = {}, scopeOptions = {}, status = statusPayload
   slotCall.factory(); // 槽已声明 ⇒ 工厂触发注册（真机由 slots.inject 在声明期回调）
   const registrationEntry = host.registrations[0];
   /**
-   * `settings.section` 的注册项**不带 `inject`** —— 宿主渲染处只递 `{ close }`，
-   * 配置面（scope）由**闭包**注入组件。这里照真机传 `{ close }`；
+   * 注册项**不带 `inject`** —— 宿主渲染处只递空 props（2026-10-15 hub 合并后壳以
+   * `renderSlot(HUB_TAB_SLOT, {}, { only: 标签id })` 渲染；`settings.section` 时代只递 `{ close }`），
+   * 配置面（scope）由**闭包**注入组件。这里照真机传空 props；
    * 若日后注册项真带上 `inject`，优先采用它（两种都合规）。
    */
   const cardProps =
@@ -608,7 +618,7 @@ test('组成前提：bundle id = 包名，dsh.client.platform=web，exports["./c
   });
 });
 
-test('判据①：★ 卡片注册进 settings.section（0.1.7+ 契约），id = settings namespace', async () => {
+test('判据①：★ 卡片注册进「Harness 接入」子槽 settings.harness-hub.tab（2026-10-15 hub 合并）', async () => {
   await withBundle({}, async (registration) => {
     const { fakeRequire } = makeRequire(makeFakeReact().React);
     const plugin = registration.factory(fakeRequire);
@@ -617,20 +627,23 @@ test('判据①：★ 卡片注册进 settings.section（0.1.7+ 契约），id =
     plugin.apply(host.ctx);
 
     assert.equal(host.slotsCalls.length, 1);
-    assert.equal(host.slotsCalls[0].name, 'settings.section', '导航栏条目必须挂 settings.section');
+    // ★ 2026-10-15 hub 合并：设置导航栏不再由本包占独立条目 —— 父条目「Harness 接入」
+    //   由 dsh-plugin-harness-hub 注册（settings.section，id=harness-hub），本条注册进它的
+    //   子标签槽。槽未声明时注册会抛 SlotCore 的 "not declared" ⇒ 必须走 slots.inject。
+    assert.equal(host.slotsCalls[0].name, HUB_TAB_SLOT, '必须挂「Harness 接入」的子标签槽');
     assert.equal(host.bindSpecs.length, 1);
     assert.deepEqual(host.bindSpecs[0], { namespace: NS }, 'configForms.get 必须用与 loader 行 id 相同的 namespace');
 
     await host.slotsCalls[0].factory();
     assert.equal(host.registrations.length, 1);
     const { options } = host.registrations[0];
-    assert.equal(options.name, 'settings.section');
-    assert.equal(options.id, NS, 'id 必须是 settings namespace');
-    assert.equal(typeof options.order, 'number', 'section 是 list 注册项 ⇒ 必须给排序位次');
-    assert.equal(typeof options.label, 'function', '★ label 必须是 thunk：0.1.7 的 section 把它当函数求值');
-    assert.equal(options.label(), 'OpenCode', 'label thunk 必须真的求得出字符串（否则导航栏里是空标题）');
+    assert.equal(options.name, HUB_TAB_SLOT);
+    assert.equal(options.id, HUB_TAB_ID, '标签 id 必须是短名 opencode（与 workbuddy 区分）');
+    assert.equal(options.order, HUB_TAB_ORDER, '标签位次必须是 20（标签行顺序 WorkBuddy → OpenCode）');
+    assert.equal(typeof options.label, 'function', '★ label 必须是 thunk：壳在读取时才求值');
+    assert.equal(options.label(), 'OpenCode', 'label thunk 必须真的求得出字符串（否则标签行里是空标题）');
     assert.equal(options.locale, NS, '★ locale 选项决定 t 从哪个命名空间解析（slot renderer 不注入 locale prop）');
-    assert.equal(options.inject, undefined, '★ settings.section 不收 inject：宿主只递 { close }，配置面走闭包');
+    assert.equal(options.inject, undefined, '★ 子标签槽不收 inject：壳只递空 props，配置面走闭包');
     assert.equal(typeof host.registrations[0].component, 'function');
 
     const runtime = makeFakeReact();
@@ -667,6 +680,10 @@ test('常量同步：bundle 内常量与 src/shared/constants.js 逐字对齐（
   const text = readFileSync(CLIENT_PATH, 'utf8');
   assert.ok(text.includes("const PACKAGE_NAME = '" + PACKAGE_NAME + "'"));
   assert.ok(text.includes("const ROUTE_STATUS = '" + ROUTE_STATUS + "'"), '状态 bridge 路由必须与共享常量逐字一致');
+  // ★ 2026-10-15 hub 合并：子槽名/标签 id/位次必须与共享常量逐字一致（bundle 手写一份）。
+  assert.ok(text.includes("const HUB_TAB_SLOT = '" + HUB_TAB_SLOT + "'"), '子槽名必须与共享常量逐字一致');
+  assert.ok(text.includes("const HUB_TAB_ID = '" + HUB_TAB_ID + "'"), '标签 id 必须与共享常量逐字一致');
+  assert.ok(text.includes('const HUB_TAB_ORDER = ' + HUB_TAB_ORDER + ';'), '标签位次必须与共享常量一致');
   assert.ok(text.includes("const ROUTE_DIAGNOSTICS = '" + ROUTE_DIAGNOSTICS + "'"), '诊断接口必须与共享常量逐字一致');
   assert.ok(text.includes("const TOOL_APPROVALS = '" + TOOL_APPROVALS + "'"), '审批工具名必须与共享常量逐字一致');
   assert.ok(text.includes('const NS = PACKAGE_NAME'), 'NS 必须与包名同源（行 id 判据：对不上则 settings.update 被拒）');

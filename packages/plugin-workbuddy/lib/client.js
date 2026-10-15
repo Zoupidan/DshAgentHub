@@ -72,10 +72,16 @@ window.__ModuleLoader__.load({
     const NS = PACKAGE_NAME;
 
     /**
-     * 设置导航栏里的**排序位次**（0.1.7 的 `settings.section` 是 list 注册项，需要 `order`）。
-     * 取 20：官方 `plugins` = 15、`general` = 0 ⇒ 本条目排在其后，不与官方条目抢位置。
+     * ★ 2026-10-15 hub 合并：设置导航栏不再由本包占**独立条目** —— 父条目「Harness 接入」
+     *   由 `dsh-plugin-harness-hub` 注册（id=`harness-hub`，order=18），本卡片注册进它的
+     *   **子标签槽**（list 槽）。三处同步（改名即三处一起改）：本文件 /
+     *   本包 src/shared/constants.js / hub 包 src/shared/constants.js。
+     *   · 标签位次：workbuddy=10、opencode=20 ⇒ 标签行顺序 WorkBuddy → OpenCode。
+     *   · 壳（hub）不在场 ⇒ 子槽未声明 ⇒ 本注册静默不发生（父条目是唯一入口）。
      */
-    const SECTION_ORDER = 20;
+    const HUB_TAB_SLOT = 'settings.harness-hub.tab';
+    const HUB_TAB_ID = 'workbuddy';
+    const HUB_TAB_ORDER = 10;
 
     /**
      * 本条目在导航栏里的文案（0.1.7 起 `label` 是 thunk，`t` 靠注册项的 `locale: NS` 选项获得）。
@@ -84,8 +90,8 @@ window.__ModuleLoader__.load({
      *   · **顶层键**（`nav` / `credits.*` / `models.*`）→ 走 `ctx.locale.bind(NS)`，
      *     消费方是注册项的 `locale` 选项（典型：`label` thunk）。
      *   · **`detail` 子表** → 卡内文案的**唯一来源**，按宿主契约形状分组（见各 Group 头注）。
-     *     这些文案在渲染期被读，而卡片组件拿不到 `t`（`settings.section` 的 renderer 只递
-     *     `{ close }`，不注入 locale prop —— 见 `makeConfigCard` 头注）⇒ 组件直接读
+     *     这些文案在渲染期被读，而卡片组件拿不到 `t`（标签由壳 `renderSlot(HUB_TAB_SLOT, {}, …)`
+     *     渲染，只递空 props、不注入 locale prop —— 见 `makeConfigCard` 头注）⇒ 组件直接读
      *     `DICT.zh.detail.*`。⭐ **故意只读 `zh`**：本包只有一份中文界面，读 `zh` 是"取当前语言"
      *     而非"忽略 en"；换成读 `en` 会让同一份界面在中英分支下显示两套文案。
      *   · 新增一条文案 = 在 `detail` 里加一个键，然后引用它 —— 不许就地写中文字面量。
@@ -1401,14 +1407,12 @@ window.__ModuleLoader__.load({
      *   〔2026-10-02 更正〕本注释此前把空白事故归因于"沿用 `inject` 写法导致 scope 为
      *   `undefined`"，**该因果链已被推翻**，见下"真正的根因"。
      *
-     * `settings.section` 这个槽与前一代的 `settings.plugin.item` **不是同一套机制**：
-     *   - 老槽（`settings.plugin.item`）支持注册项带 `inject: () => ({...})`，宿主把返回面当 props 递给组件；
-     *   - 新槽（`settings.section`）**只传 `{ close }`** —— 槽声明
-     *     `"settings.section": { kind: "list", scope: "root" }`（**无 `inject` 字段**），
-     *     渲染处 `renderSlot("settings.section", { close: onClose }, { only: active })`
-     *     （`dsh-client-ui-settings-general/lib/client.js:1136-1139` / `:337`），
-     *     官方注册样板（同文件 `:1171-1181`）同样**不写 `inject`**。
-     * ⇒ 注册项上的 `inject` 在本槽是**被忽略的可选字段**（不是"会炸"），
+     * 〔2026-10-15 hub 合并后〕本卡片渲染槽 = `settings.harness-hub.tab`（「Harness 接入」的
+     *   子标签槽）：壳以 `renderSlot(HUB_TAB_SLOT, {}, { only: 标签id })` 渲染 —— **只递空 props**。
+     *   历次槽都**不给**组件递 `scope`：老槽（`settings.plugin.item`）靠注册项 `inject` 面递 props，
+     *   `settings.section`（独立条目时代）只递 `{ close }`
+     *   （`dsh-client-ui-settings-general/lib/client.js:337`），子标签槽只递空 props。
+     * ⇒ 注册项上的 `inject` 在这里是**可选字段**，
      *   组件拿不到 `scope` 是因为宿主压根不递它 ⇒ 必须走闭包。
      *
      * ★★★ 真正的根因（2026-10-01 "设置项在、里面全白"）★★★
@@ -1670,24 +1674,28 @@ window.__ModuleLoader__.load({
       //
       // 三处断裂，逐条对齐 `packages/plugin-qoder/lib/client.js`（已迁移的那份）：
       //   ① `ctx.settingsScope.bind({namespace})` → `ctx.configForms.get(NS)`
-      //   ② 槽 `settings.plugin.item`（0.1.7 已删）→ `settings.section`（设置导航栏独立条目）
+      //   ② 槽 `settings.plugin.item`（0.1.7 已删）→（2026-10-15 起）「Harness 接入」父条目的
+      //      子标签槽 `settings.harness-hub.tab`（更早先落在 `settings.section` 独立条目）
       //   ③ `locale` 成为**必需** inject（`t` 靠注册项的 `locale` 选项获得；slot renderer 不注入 locale prop）
       const scope = ctx.configForms.get(NS);
       // ★ 注册字典：`label` thunk 通过 `ctx.locale.bind(NS)` 取值（0.1.7 的 slot renderer
       //   **不注入** locale prop，所以 `t` 只能从注册项的 `locale: NS` 声明处解析）。
       ctx.effect(() => ctx.locale.register(NS, DICT), PACKAGE_NAME + ': dictionaries');
-      ctx.slots.inject('settings.section', () =>
+      // ★ 2026-10-15 hub 合并：从「设置导航栏独立条目」迁移到「Harness 接入」（dsh-plugin-
+      //   harness-hub）父条目的**子标签槽**。父条目注册时以 children 声明该槽（kind=list）；
+      //   槽未声明时注册会抛 SlotCore 的 "not declared" ⇒ 用 `slots.inject` 等声明出现再注册
+      //   （父条目不在场 ⇒ 本回调不触发 = 本条目不出现 —— 父是唯一入口）。
+      ctx.slots.inject(HUB_TAB_SLOT, () =>
         ctx.slots.register(
           {
-            name: 'settings.section',
-            id: NS,
-            order: SECTION_ORDER,
-            // ★ 0.1.7 的 section 注册项用 `label` thunk + `locale`，不用 `key`。
+            name: HUB_TAB_SLOT,
+            id: HUB_TAB_ID,
+            order: HUB_TAB_ORDER,
+            // ★ 0.1.7 的列表注册项用 `label` thunk + `locale`，不用 `key`。
             label: () => ctx.locale.bind(NS)('nav'),
             locale: NS,
-            // ★ **没有 `inject`**：`settings.section` 的宿主渲染处只传 `{ close }`
-            //   （`dsh-client-ui-settings-general/lib/client.js:337`），没有 `inject` 机制。
-            //   写上去也不会生效 —— `scope` 走**闭包**（见 `makeConfigCard` 的头注）。
+            // ★ **没有 `inject`**：标签由壳以 `renderSlot(HUB_TAB_SLOT, {}, { only })` 渲染，
+            //   只递空 props；配置面（scope）走**闭包**（见 `makeConfigCard` 的头注）。
           },
           // ★ 组件在装配期就把 `scope` **闭**进去：不依赖宿主传不传那个 prop。
           makeConfigCard(scope),

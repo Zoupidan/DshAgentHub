@@ -1,0 +1,21 @@
+# dsh-plugin-harness-hub — harness 接入的父入口（设置页壳）
+#
+# 【patch 语义铁律】（实测：dsh-base/cordis.patch.yml 头注释）
+#   "A patch replaces the targeted row's whole `config` rather than merging into it"
+#   "the last write winning per row"（行级后写覆盖）
+#   ⇒ 本文件【只 insert 自己的行】，不覆写任何既有行。
+#
+# 【本壳与两个 harness 包的关系】
+#   壳只做三件事：注册 `settings.section`（id=`harness-hub`，order=18）、声明子槽
+#   `settings.harness-hub.tab`（kind=list）、渲染标签行与标签面板（≥2 个标签才出现标签行）。
+#   不注册任何配置 namespace、不读任何 harness 状态、不落任何数据。
+#   WorkBuddy / OpenCode 各自的 client bundle 注册进子槽；**壳不在场 ⇒ 子槽未声明 ⇒
+#   子槽注册静默不发生**（父条目是唯一入口 —— 一 harness 一包、互不共享状态的落点）。
+#
+# 【本行无 config】空 apply（见 lib/index.js），不产生 settings namespace，
+#   故不需要与任何 schema 默认值同步的对账。
+
+- insert:
+    # 行 id 必须与 src/shared/constants.js 的 NS / 包名一致（loader 行 id 约定）。
+    - id: dsh-plugin-harness-hub
+      name: 'dsh-plugin-harness-hub'

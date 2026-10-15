@@ -10,8 +10,10 @@
  *     （`dsh-client-modules/lib/client.js` 对不上即抛 "loaded without registering"）；
  *   - factory 返回的 module.exports 即 cordis 插件对象（`{ apply, inject }`）；
  *   - require 白名单 = app bundle 内联 seed 表；本 bundle 只用 react + primitives；
- *   - 卡片槽 = `settings.section`（0.1.7+）：注册项 `{ name, id, order, label thunk, locale }`，**无 inject**
- *     —— 宿主渲染处只递 `{ close }`，配置面（scope）走**闭包**；
+ *   - 卡片槽 = 「Harness 接入」父条目（dsh-plugin-harness-hub）的**子标签槽**
+ *     `settings.harness-hub.tab`（list 槽；2026-10-15 前为 `settings.section` 独立条目）：
+ *     注册项 `{ name, id, order, label thunk, locale }`，**无 inject** —— 壳渲染处只递空 props，
+ *     配置面（scope）走**闭包**；
  *   - settings 读写 = `ctx.configForms.get(NS)` → `{ getSnapshot, subscribe, set, … }`；
  *   - CSS 去重注入（tagId + `style[data-plugin-css]` 查询）；
  *   - 状态 bridge = 同源 fetch 相对路径（ROUTE_STATUS，host 侧 fail-closed 只回环）。
@@ -71,10 +73,16 @@ window.__ModuleLoader__.load({
     /** 审批工具名（模型面工具；pendingCount>0 的醒目行里点名它）。 */
     const TOOL_APPROVALS = 'opencode_approvals';
     /**
-     * 设置导航栏里的**排序位次**（0.1.7 的 `settings.section` 是 list 注册项，需要 `order`）。
-     * 取 20：官方 `plugins` = 15、`general` = 0 ⇒ 本条目排在其后，不与官方条目抢位置。
+     * ★ 2026-10-15 hub 合并：设置导航栏不再由本包占**独立条目** —— 父条目「Harness 接入」
+     *   由 `dsh-plugin-harness-hub` 注册（id=`harness-hub`，order=18），本卡片注册进它的
+     *   **子标签槽**（list 槽）。三处同步（改名即三处一起改）：本文件 /
+     *   本包 src/shared/constants.js / hub 包 src/shared/constants.js。
+     *   · 标签位次：workbuddy=10、opencode=20 ⇒ 标签行顺序 WorkBuddy → OpenCode。
+     *   · 壳（hub）不在场 ⇒ 子槽未声明 ⇒ 本注册静默不发生（父条目是唯一入口）。
      */
-    const SECTION_ORDER = 20;
+    const HUB_TAB_SLOT = 'settings.harness-hub.tab';
+    const HUB_TAB_ID = 'opencode';
+    const HUB_TAB_ORDER = 20;
     /** lastRun.reply 在主视图里的摘录上限（超出截断并以 `…` 标注 —— 不假装是全文）。 */
     const REPLY_EXCERPT_LIMIT = 80;
 
@@ -82,7 +90,7 @@ window.__ModuleLoader__.load({
      * 文案字典（两段式约定，承接 WorkBuddy 同款）：
      *   · **顶层键**（`nav`）→ 走 `ctx.locale.bind(NS)`，消费方是注册项的 `label` thunk；
      *   · **`detail` 子表** → 卡内文案的**唯一来源**，按卡内区块分组。组件直接读 `DICT.zh.detail.*`
-     *     （`settings.section` 的 renderer 只递 `{ close }`，不注入 locale prop）。
+     *     （标签渲染只递空 props，不注入 locale prop）。
      *     ⭐ 故意只读 `zh`：本包只有一份中文界面，读 `zh` 是"取当前语言"而非"忽略 en"。
      *   · 新增一条文案 = 在 `detail` 里加一个键，然后引用它 —— 不许就地写中文字面量。
      */
@@ -853,7 +861,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 配置卡片主体（scope 走**闭包** —— `settings.section` 的宿主渲染处只递 `{ close }`，
+     * 配置卡片主体（scope 走**闭包** —— 子标签槽的渲染处只递空 props，
      * 注册项上的 `inject` 在本槽被忽略；组件拿不到 scope，必须闭进来）。
      *
      * ★ 取值口径（本卡自己的投影规则，测试两个方向都钉住）：
@@ -1092,21 +1100,26 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       // 0.1.7 迁移三处（与 plugin-workbuddy 同款，事故见该文件头注）：
       //   ① `ctx.settingsScope.bind({namespace})` → `ctx.configForms.get(NS)`；
-      //   ② 槽 `settings.plugin.item`（已删）→ `settings.section`（设置导航栏独立条目）；
+      //   ② 槽 `settings.plugin.item`（已删）→（2026-10-15 起）「Harness 接入」父条目的
+      //      子标签槽 `settings.harness-hub.tab`（更早先落在 `settings.section` 独立条目）；
       //   ③ `locale` 是必需 inject（`t` 靠注册项的 `locale` 选项获得）。
       const scope = ctx.configForms.get(NS);
       ctx.effect(() => ctx.locale.register(NS, DICT), PACKAGE_NAME + ': dictionaries');
-      ctx.slots.inject('settings.section', () =>
+      // ★ 2026-10-15 hub 合并：从「设置导航栏独立条目」迁移到「Harness 接入」（dsh-plugin-
+      //   harness-hub）父条目的**子标签槽**。父条目注册时以 children 声明该槽（kind=list）；
+      //   槽未声明时注册会抛 SlotCore 的 "not declared" ⇒ 用 `slots.inject` 等声明出现再注册
+      //   （父条目不在场 ⇒ 本回调不触发 = 本条目不出现 —— 父是唯一入口）。
+      ctx.slots.inject(HUB_TAB_SLOT, () =>
         ctx.slots.register(
           {
-            name: 'settings.section',
-            id: NS,
-            order: SECTION_ORDER,
-            // 0.1.7 的 section 注册项用 `label` thunk + `locale`，不用 `key`。
+            name: HUB_TAB_SLOT,
+            id: HUB_TAB_ID,
+            order: HUB_TAB_ORDER,
+            // 0.1.7 的列表注册项用 `label` thunk + `locale`，不用 `key`。
             label: () => ctx.locale.bind(NS)('nav'),
             locale: NS,
-            // ★ **没有 `inject`**：`settings.section` 的宿主渲染处只传 `{ close }`，
-            //   没有 inject 机制；写上也不生效。配置面（scope）走**闭包**（见 makeConfigCard 头注）。
+            // ★ **没有 `inject`**：标签由壳以 `renderSlot(HUB_TAB_SLOT, {}, { only })` 渲染，
+            //   只递空 props；配置面（scope）走**闭包**（见 makeConfigCard 头注）。
           },
           makeConfigCard(scope),
         ),

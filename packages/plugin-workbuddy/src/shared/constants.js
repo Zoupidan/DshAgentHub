@@ -23,6 +23,15 @@ export const PACKAGE_NAME = 'dsh-plugin-workbuddy';
  */
 export const NS = PACKAGE_NAME;
 
+/**
+ * ★ 2026-10-15 hub 合并：设置导航栏父条目「Harness 接入」（dsh-plugin-harness-hub）的
+ *   **子标签槽**与本条目的标签位。client bundle 手写同名字面量（bundle 不能 import 本文件），
+ *   由 client.test.js 的"常量同步"用例钉住；hub 包的 client.test.js 另有跨包同步断言。
+ */
+export const HUB_TAB_SLOT = 'settings.harness-hub.tab';
+export const HUB_TAB_ID = 'workbuddy';
+export const HUB_TAB_ORDER = 10;
+
 /** 模型可见工具名（§3.4.2：注册/注销以这一对为准）。 */
 export const TOOL_RUN = 'workbuddy_run';
 export const TOOL_STATUS = 'workbuddy_status';

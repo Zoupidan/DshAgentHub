@@ -1,0 +1,33 @@
+{
+  "name": "dsh-plugin-harness-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "harness 接入的父入口：dsh 设置页一个导航条目「Harness 接入」，各本机 harness（WorkBuddy/OpenCode）以标签页形态挂进来（壳零能力、零状态）。",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/index.js", "lib/client.js", "src", "cordis.patch.yml", "README.md"],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "dsh": {
+    "bundle": { "patch": "cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    },
+    "engines": { "dsh": ">=0.1.5-rc.2" },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible"
+      }
+    }
+  }
+}
