@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 dsh-control-plane contributors
+Copyright (c) 2026 DshAgentHub contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,13 +24,12 @@ SOFTWARE.
 
 ## 附注（不属于许可证条款，仅为说明）
 
-> 署名行 `Copyright (c) 2026 dsh-control-plane contributors` 是社区项目的常规写法。
+> 署名行 `Copyright (c) 2026 DshAgentHub contributors` 是社区项目的常规写法。
 > 项目所有者若希望署实体名（个人 / 公司 / 组织），改这一行与年份即可。
 > 若**更换许可证**，请同时更新 `package.json` 的 `"license"` 字段 ——
 > 两处不一致会让 npm 与 GitHub 渲染出互相矛盾的许可证信息。
 
-1. 本项目处于 `0.x` 早期阶段（当前版本 `0.2.1`，发布记录见
-   [Releases](https://github.com/Zoupidan/dsh-control-plane/releases) 与 `CHANGELOG.md`），
+1. 本项目处于 `0.x` 早期阶段（当前版本 `0.4.0`，发布记录见 `CHANGELOG.md`），
    **尚未发布 1.0 稳定版**，也不对稳定性或可用性作出承诺。
    已知缺口写在 README 的「已知限制」一节 —— 请在依赖本项目前先读那一节。
 

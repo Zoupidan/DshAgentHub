@@ -1,7 +1,7 @@
 name: CI
 
 # ============================================================================
-# dsh-control-plane · 持续集成
+# DshAgentHub · 持续集成
 #
 # 本文件引用的每一个 npm 脚本都取自 package.json 的 scripts（逐个核对过，无编造）：
 #   ci:redlines / ci:redlines:self-test / test:client / test:host / link:dsh-deps

@@ -28,7 +28,7 @@
 |---|---|---|
 | 大脑 | dsh（DeepSeek Harness） | 监控、创建对话、下发任务、收回执、发起审批 |
 | 手 | 桌面 harness：已接入 WorkBuddy；攻坚 opencode | 在自己界面里把活干出来，全程可见 |
-| 神经 | 本仓库（DshAgentHub / dsh-control-plane） | 把每个 harness 接进 dsh 的插件集 |
+| 神经 | 本仓库（DshAgentHub） | 把每个 harness 接进 dsh 的插件集 |
 
 ---
 
@@ -100,3 +100,4 @@
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-10-15 | 创建本文件；项目定义更新为"大脑 + 桌面 harness 可视化任务下发" | §7 主理人原话 |
+| 2026-10-16 | 仓库更名 DshAgentHub（原 dsh-control-plane）；§2 角色表仓库名同步 | 主理人指令（2026-10-16） |

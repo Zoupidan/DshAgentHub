@@ -85,8 +85,8 @@ graph TB
 ### 步骤
 
 ```powershell
-git clone https://github.com/Zoupidan/dsh-control-plane.git
-cd dsh-control-plane
+git clone https://github.com/Zoupidan/DshAgentHub.git
+cd DshAgentHub
 
 node -v                 # 确认 >= 22.5.0
 

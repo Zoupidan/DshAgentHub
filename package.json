@@ -33,7 +33,7 @@
     "runtime": "Node 22（本机实测 v22.22.2）。活动区为 ESM JS + JSDoc 类型（packages/plugin-workbuddy）；v1 时代的 node:sqlite 方案已随 src/ 冻结至 _legacy/，v3 会话映射落 ctx.settings。",
     "redlines": "四条 CI 红线（R3-7）：lint:c3 = C3 禁模拟点击；check:c2:exec = C2 进程出口审计（唯一出口 ctx.subprocess）；check:c2:probe = H-NO-EXEC-PROBE（探测路径零执行）；check:knobs = WB-7 设置面自证（声明的旗标要么真下发、要么写明惰性）。旧 check-c2-outbound.mjs（动态出站审计）已随 v2 退役移入 _legacy/，待续档按需重写启用。",
     "ui": "UI = dsh 设置页插件卡片（lib/client.js 单文件 bundle，无构建器；朴素 createElement + 注入 CSS），无自研前端。",
-    "publish": "仓库地址已统一为 https://github.com/Zoupidan/dsh-control-plane（repository / homepage / bugs 三字段据此填写；品牌显示名 DshAgentHub 保留，包/仓库技术名 dsh-control-plane 不变）。注意 private:true 仍在（防止误 publish）；GitHub 仓库不发布到 npm 的话可不动它。"
+    "publish": "仓库 = https://github.com/Zoupidan/DshAgentHub（2026-10-16 更名，原 dsh-control-plane；repository / homepage / bugs 三字段据此填写）。注意 private:true 仍在（防止误 publish）；本仓库不发布到 npm。"
   },
   "keywords": [
     "agent",
@@ -45,10 +45,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Zoupidan/dsh-control-plane.git"
+    "url": "https://github.com/Zoupidan/DshAgentHub.git"
   },
-  "homepage": "https://github.com/Zoupidan/dsh-control-plane",
+  "homepage": "https://github.com/Zoupidan/DshAgentHub",
   "bugs": {
-    "url": "https://github.com/Zoupidan/dsh-control-plane/issues"
+    "url": "https://github.com/Zoupidan/DshAgentHub/issues"
   }
 }
