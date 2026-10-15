@@ -18,7 +18,7 @@
  *
  * 可证边界（诚实登记，真机项留受控窗口）：
  *   - 可证：模块注册形态 / 卡片注册描述符 / 读路径（configForms 快照 → 树）/ 写路径
- *     （交互回调 → scope.set → 快照变更 → 重渲染）/ 三态徽标与状态区文案 / CSS 去重 / 常量同步。
+ *     （交互回调 → scope.set → 快照变更 → 重渲染）/ 状态标签与四态任务行 / 状态区文案 / CSS 去重 / 常量同步。
  *   - 不可证（本文件不假装覆盖）：真机 React 渲染、slot dispatch、设置写穿透到 host 落盘、
  *     桌面端对"经 API 新建的会话"的自动刷新行为（产物内以 `// [待验]` 标注，与本文件同口径）。
  *
@@ -31,6 +31,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// 四态词表一致性锚点：host 侧投影是单一语义源（映射依据表见 src/host/launch/in-flight-states.js 文件头）。
+import { IN_FLIGHT_STATES, IN_FLIGHT_STATE_LABELS } from '../src/host/launch/in-flight-states.js';
 
 import {
   HUB_TAB_ID,
@@ -715,7 +718,7 @@ test('判据②a：总闸开关读写 —— 快照 → 树；交互 → scope.s
   assert.deepEqual(app.scope.commits[1], { op: 'set', field: 'enabled', value: false });
 });
 
-test('判据②b：总闸置灰只看可写性 —— 服务缺失**不**禁用开关（"开了但服务没起来"是合法状态）', async () => {
+test('判据②b：总闸置灰只看可写性 —— 未启动**不**禁用开关（"开了但服务没起来"是合法状态）', async () => {
   const app = await boot({
     status: statusPayload({
       registry: 'SERVICE_MISSING',
@@ -727,8 +730,8 @@ test('判据②b：总闸置灰只看可写性 —— 服务缺失**不**禁用�
   await settle();
   const tree = app.expand();
   const input = findAll(tree, (n) => n.type === 'input' && n.props.className === 'dsh-oc-switch')[0];
-  assert.equal(input.props.disabled, false, '★ 服务缺失不是"不可写"—— 禁用会让用户没法提前配好');
-  assert.ok(mainText(tree).includes('○ 服务缺失'), '徽标仍需如实说服务缺失');
+  assert.equal(input.props.disabled, false, '★ 未启动不是"不可写"—— 禁用会让用户没法提前配好');
+  assert.ok(mainText(tree).includes('○ 未启动'), '状态标签仍需如实说未启动');
 });
 
 test('判据②c：门控 = 快照 ready **且** writable —— 任一不满足 ⇒ 全控件置灰 + 只读文案', async () => {
@@ -913,22 +916,22 @@ test('判据②i：等待上限 —— 只回写有限非负整数；非法输�
   assert.equal(app.scope.commits.length, 1, '负数同样不回写（等待上限没有负值语义）');
 });
 
-// ───────────────────────── 判据④：三态徽标与状态区 ─────────────────────────
+// ───────────────────────── 判据④：状态标签与状态区 ─────────────────────────
 
-test('判据④a：三态徽标之"已就绪" —— REGISTERED / UNREGISTERED / DEGRADED 都是"服务在"', async () => {
+test('判据④a：状态标签之"已启动" —— REGISTERED / UNREGISTERED / DEGRADED 都是"服务在"', async () => {
   for (const registry of ['REGISTERED', 'UNREGISTERED', 'DEGRADED']) {
     const app = await boot({ status: statusPayload({ registry }) });
     app.expand();
     app.flushEffects();
     await settle();
     const tree = app.expand();
-    assert.ok(mainText(tree).includes('● 已就绪'), `${registry} ⇒ ● 已就绪`);
+    assert.ok(mainText(tree).includes('● 已启动'), `${registry} ⇒ ● 已启动`);
     const badge = findAll(tree, (n) => n.type === 'span' && String(n.props.className).startsWith('dsh-oc-badge'))[0];
     assert.ok(String(badge.props.className).includes('dsh-oc-badge--ready'), `${registry} ⇒ badge slug = ready`);
   }
 });
 
-test('判据④b：服务缺失判定 —— SERVICE_MISSING 或 probe.installed===false（探测结论优先于注册文字）', async () => {
+test('判据④b：未启动判定 —— SERVICE_MISSING 或 probe.installed===false（探测结论优先于注册文字）', async () => {
   const cases = [
     ['registry=SERVICE_MISSING（探测在）', statusPayload({ registry: 'SERVICE_MISSING' })],
     ['registry=REGISTERED 但探测说没装', statusPayload({ probe: probePayload({ installed: false, reason: 'service-missing' }) })],
@@ -940,15 +943,15 @@ test('判据④b：服务缺失判定 —— SERVICE_MISSING 或 probe.installed
     await settle();
     const tree = app.expand();
     const main = mainText(tree);
-    assert.ok(main.includes('○ 服务缺失'), `${label} ⇒ ○ 服务缺失`);
+    assert.ok(main.includes('○ 未启动'), `${label} ⇒ ○ 未启动`);
     assert.ok(
       main.includes('本机没找到可用的 OpenCode 服务（service.json 未命中或已失效）—— 先启动 OpenCode 桌面端，再点刷新。'),
-      '服务缺失必须给一句可执行的话（唯一动作：把桌面端打开）',
+      '未启动必须给一句可执行的话（唯一动作：把桌面端打开）',
     );
     const badge = findAll(tree, (n) => n.type === 'span' && String(n.props.className).startsWith('dsh-oc-badge'))[0];
-    assert.ok(String(badge.props.className).includes('dsh-oc-badge--service-missing'));
+    assert.ok(String(badge.props.className).includes('dsh-oc-badge--not-started'));
     const input = findAll(tree, (n) => n.type === 'input' && n.props.className === 'dsh-oc-switch')[0];
-    assert.equal(input.props.disabled, false, '服务缺失不禁用总闸（可提前配好）');
+    assert.equal(input.props.disabled, false, '未启动不禁用总闸（可提前配好）');
   }
 });
 
@@ -1112,12 +1115,12 @@ test('R1 补强：stale 响应竞态 —— 刷新后旧响应不得覆盖新值
 
 // ───────────────────────── 判据④：任务块（在途 + 最近一轮下发） ─────────────────────────
 
-test('判据④e：在途作业 —— >0 才有那一行（空态不印"在途作业：0"）', async () => {
+test('判据④e：在途作业 —— >0 才有这一段；逐条四态如实（下发中/执行中）；原始 phase 不上主视图', async () => {
   const busy = await boot({
     status: statusPayload({
       inFlight: [
-        { sessionKey: 'k1', sessionId: '', startedAt: 1, phase: 'prompting' },
-        { sessionKey: 'k2', sessionId: 'ses_live02', startedAt: 2, phase: 'waiting' },
+        { sessionKey: 'k1', sessionId: '', startedAt: Date.now() - 5000, phase: 'prompting' },
+        { sessionKey: 'k2', sessionId: 'ses_live02', startedAt: Date.now() - 61000, phase: 'waiting' },
       ],
     }),
   });
@@ -1125,16 +1128,118 @@ test('判据④e：在途作业 —— >0 才有那一行（空态不印"在途�
   busy.flushEffects();
   await settle();
   const busyMain = mainText(busy.expand());
-  assert.ok(busyMain.includes('在途作业：2 个运行中'), '在途数必须显示');
-  assert.equal(busyMain.includes('prompting'), false, '阶段枚举不上主视图（只报计数）');
+  assert.ok(busyMain.includes('在途作业：2 个'), '在途数必须显示（不写"运行中"—— 每条各有各的态）');
+  assert.ok(busyMain.includes('· 下发中 · 亲和键：k1 · 已等待'), '下发阶段的记录 ⇒ 「下发中」+ 亲和键 + 等待时长');
+  assert.ok(busyMain.includes('· 执行中 · 亲和键：k2 · 已等待'), '等待阶段的记录 ⇒ 「执行中」');
+  assert.equal(busyMain.includes('prompting'), false, '原始 phase 枚举不上主视图');
+  assert.equal(busyMain.includes('waiting'), false, '原始 phase 枚举不上主视图（waiting 同样不印）');
+  assert.ok(busyMain.includes('◐ 任务下发中'), '含下发阶段记录 ⇒ 总体状态标签「任务下发中」');
 
   const idle = await boot({});
   idle.expand();
   idle.flushEffects();
   await settle();
   const idleMain = mainText(idle.expand());
-  assert.equal(idleMain.includes('在途作业'), false, '在途为 0 ⇒ 整行不渲染（不印空话）');
+  assert.equal(idleMain.includes('在途作业'), false, '在途为 0 ⇒ 整段不渲染（不印空话）');
   assert.ok(idleMain.includes('暂无下发记录'), '无 lastRun ⇒ 明确空态');
+});
+
+test('判据④e2：状态标签 —— 在途记录全在执行 ⇒ 「工作中」（slug=working，与「任务下发中」分流）', async () => {
+  const app = await boot({
+    status: statusPayload({ inFlight: [{ sessionKey: 'k', sessionId: '', startedAt: Date.now(), phase: 'receipt' }] }),
+  });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const tree = app.expand();
+  assert.ok(mainText(tree).includes('◐ 工作中'), '在途（非下发阶段）⇒ 「工作中」');
+  const badge = findAll(tree, (n) => n.type === 'span' && String(n.props.className).startsWith('dsh-oc-badge'))[0];
+  assert.ok(String(badge.props.className).includes('dsh-oc-badge--working'));
+});
+
+test('判据④e3：状态标签 —— 总闸关优先于注册态（REGISTERED 也是）⇒ 「未开启」（slug=off）', async () => {
+  const app = await boot({ status: statusPayload({ config: { enabled: false } }) });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const tree = app.expand();
+  assert.ok(mainText(tree).includes('○ 未开启'), 'config.enabled=false ⇒ 「未开启」');
+  const badge = findAll(tree, (n) => n.type === 'span' && String(n.props.className).startsWith('dsh-oc-badge'))[0];
+  assert.ok(String(badge.props.className).includes('dsh-oc-badge--off'));
+});
+
+test('判据④e4：四态词表与 host 投影逐字一致（跨运行时镜像防漂移）；压缩中/已结束不许凭空出现', async () => {
+  const cases = [
+    ['prompting', IN_FLIGHT_STATES.DISPATCHING],
+    ['resolving-session', IN_FLIGHT_STATES.DISPATCHING],
+    ['waiting', IN_FLIGHT_STATES.RUNNING],
+    ['receipt', IN_FLIGHT_STATES.RUNNING],
+  ];
+  for (const [phase, expected] of cases) {
+    const app = await boot({
+      status: statusPayload({ inFlight: [{ sessionKey: 'k', sessionId: '', startedAt: Date.now(), phase }] }),
+    });
+    app.expand();
+    app.flushEffects();
+    await settle();
+    const text = mainText(app.expand());
+    assert.ok(
+      text.includes(IN_FLIGHT_STATE_LABELS[expected]),
+      `phase=${phase} ⇒ 渲染须含 host 词表「${IN_FLIGHT_STATE_LABELS[expected]}」`,
+    );
+  }
+  const app = await boot({
+    status: statusPayload({ inFlight: [{ sessionKey: 'k', sessionId: '', startedAt: Date.now(), phase: 'waiting' }] }),
+  });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const text = mainText(app.expand());
+  assert.equal(
+    text.includes(IN_FLIGHT_STATE_LABELS[IN_FLIGHT_STATES.COMPACTING]),
+    false,
+    '压缩中当前无信号 ⇒ 不许出现（不编）',
+  );
+  assert.equal(
+    text.includes(IN_FLIGHT_STATE_LABELS[IN_FLIGHT_STATES.FINISHED]),
+    false,
+    '在途面不可能有「已结束」（收敛即出表）',
+  );
+});
+
+test('判据④f2：「无终态回执 ≠ 已结束」—— timeout/aborted 无条件警示；idle-204 无回执警示；终态不警示', async () => {
+  const timeout = await boot({ status: statusPayload({ lastRun: lastRunPayload({ waitStatus: 'timeout', outcome: null }) }) });
+  timeout.expand();
+  timeout.flushEffects();
+  await settle();
+  assert.ok(
+    mainText(timeout.expand()).includes('上一轮等待未收敛 —— 任务可能仍在执行（不是已结束）'),
+    '超时 ⇒ 明说"不是已结束"',
+  );
+
+  const stale = await boot({ status: statusPayload({ lastRun: lastRunPayload({ waitStatus: 'timeout', outcome: 'succeeded' }) }) });
+  stale.expand();
+  stale.flushEffects();
+  await settle();
+  assert.ok(
+    mainText(stale.expand()).includes('不是已结束'),
+    '超时一刻可能的残留 outcome 不足为凭 ⇒ 依然警示（判据同 host，无条件）',
+  );
+
+  const noReceipt = await boot({ status: statusPayload({ lastRun: lastRunPayload({ waitStatus: 'idle-204', outcome: null }) }) });
+  noReceipt.expand();
+  noReceipt.flushEffects();
+  await settle();
+  assert.ok(
+    mainText(noReceipt.expand()).includes('会话已空闲但本轮没有终态回执 —— 不是已结束'),
+    'idle 但无终态 outcome ⇒ 明说"不是已结束"',
+  );
+
+  const done = await boot({ status: statusPayload({ lastRun: lastRunPayload({ waitStatus: 'idle-204', outcome: 'succeeded' }) }) });
+  done.expand();
+  done.flushEffects();
+  await settle();
+  assert.equal(mainText(done.expand()).includes('不是已结束'), false, '有终态回执 ⇒ 不画警示行');
 });
 
 test('判据④f：最近一轮成功 —— 主视图人话全行；排障详情（摘录/投递/时刻/用量/证据）只进折叠', async () => {
@@ -1335,7 +1440,7 @@ test('收纳：默认展开 → 收起只剩标题+徽标（无摘要行）→ �
   assert.equal(toggle2.props['aria-label'], '展开设置: OpenCode');
   assert.equal(findAll(collapsed, (n) => n.props && n.props.className === 'dsh-oc-card__body').length, 0, '收起后内容区必须消失');
   assert.equal(findAll(collapsed, (n) => n.type === 'input').length, 0, '收起后控件必须消失');
-  assert.ok(text.includes('OpenCode') && text.includes('● 已就绪'), '★ 收起态仍留标题 + 徽标（"现在能不能用"是收起时最该看到的一件事）');
+  assert.ok(text.includes('OpenCode') && text.includes('● 已启动'), '★ 收起态仍留标题 + 状态标签（"现在能不能用"是收起时最该看到的一件事）');
   assert.equal(text.includes('DshAgentHub 插件'), false, '收起态不印描述行');
   assert.equal(
     findAll(collapsed, (n) => /summary/i.test(String(n.props?.className ?? ''))).length,

@@ -19,7 +19,7 @@
  *   - 状态 bridge = 同源 fetch 相对路径（ROUTE_STATUS，host 侧 fail-closed 只回环）。
  *
  * 卡片内容（本包自己的形状 —— 与 WorkBuddy 卡互不共享、不伪造能力）：
- *   ① 头：标题 + 三态徽标（未探测 / 服务缺失 / 已就绪）+ chevron；收起态只留这一行（无摘要）。
+ *   ① 头：标题 + 状态标签（未开启 / 未探测 / 未启动 / 已启动 / 工作中 / 任务下发中）+ chevron；收起态只留这一行（无摘要）。
  *   ② 任务：在途计数（>0 才画）+ 最近一轮下发摘要（会话/亲和键/新建或复用/结果/回执/原因/模型/成本/时间）。
  *   ③ 配置：总闸（enabled）+ 模型（文本框 + 候选目录下拉）+ 推理档位 + 工作目录/绑定会话/服务目录/
  *      服务地址/等待上限。
@@ -102,11 +102,17 @@ window.__ModuleLoader__.load({
           card: {
             desc: 'DshAgentHub 插件 · 在这里把本机 OpenCode 配成 dsh 工具，看下发记录与待批审批',
           },
-          /** 三态徽标（未探测 / 服务缺失 / 已就绪）—— 判定见 badgeOf()。 */
+          /**
+           * 状态标签（未开启 / 未探测 / 未启动 / 已启动 / 工作中 / 任务下发中）—— 判定见 badgeOf()。
+           * 词表与 WorkBuddy 卡对齐（两个 harness 的状态显示用同一组词；四态标签另有 TASK_STATE_LABELS）。
+           */
           badge: {
             unknown: '… 未探测',
-            serviceMissing: '○ 服务缺失',
-            ready: '● 已就绪',
+            off: '○ 未开启',
+            dispatching: '◐ 任务下发中',
+            working: '◐ 工作中',
+            notStarted: '○ 未启动',
+            ready: '● 已启动',
           },
           /** 模型行（文本框 + 候选目录）。 */
           model: {
@@ -154,7 +160,12 @@ window.__ModuleLoader__.load({
           /** 任务块（在途 + 最近一轮下发摘要）。 */
           task: {
             blockTitle: '任务',
-            inFlightSome: (n) => '在途作业：' + n + ' 个运行中',
+            inFlightSome: (n) => '在途作业：' + n + ' 个',
+            /** 在途单行的时长段（时长由 formatWait 算；空串不渲染该段）。 */
+            inflightWaited: (w) => '已等待 ' + w,
+            /** ★「无终态回执 ≠ 已结束」的卡片面警示句（判据与 host launch/in-flight-states.js 同源）。 */
+            unfinishedRunning: '上一轮等待未收敛 —— 任务可能仍在执行（不是已结束）',
+            unfinishedNoReceipt: '会话已空闲但本轮没有终态回执 —— 不是已结束',
             /** 无下发记录的空态（有记录但字段缺 ⇒ 该行不渲染，见 TaskBlock）。 */
             empty: '暂无下发记录',
             sessionPrefix: '会话：',
@@ -271,27 +282,81 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 三态徽标判定 —— 卡片上回答"服务到底在不在"的那一个符号。
+     * 在途 phase → 四态投影的**客户端镜像**（跨运行时不能 import host 模块）。
      *
-     * 判定顺序（与需求逐条对应）：
-     *   ① `probe.installed === false` 或 `registry === 'SERVICE_MISSING'` ⇒ 服务缺失；
-     *      （installed 优先于 registry 文字：探测结论是证据，registry 是注册流程的账。）
-     *   ② `REGISTERED` / `UNREGISTERED` / `DEGRADED` ⇒ 已就绪
-     *      （UNREGISTERED 多半只是总闸没开、DEGRADED 是带残缺可用 —— 都是"服务在"）；
-     *   ③ 载荷未到达 / registry 未知值 ⇒ 未探测 —— **不**在没证据时宣称"已就绪"。
+     * ★ 单一语义源 = host `src/host/launch/in-flight-states.js`（完整映射依据表在它文件头）：
+     *   - 下发中 = ''/connecting/resolving-session/creating-session/setting-model/prompting；
+     *   - 执行中 = waiting/receipt（+ 文档别名 fetching-receipt）；
+     *   - 压缩中当前**无可观察信号** ⇒ 客户端不产出该态（也不许把等待猜成压缩中、把未结束当已结束）；
+     *   - 未知 phase ⇒ 「未知」，绝不硬塞。
+     * ★ 两侧词表一致性由 client.test.js 钉住（渲染文本 vs host IN_FLIGHT_STATE_LABELS 逐字比对）。
+     */
+    const TASK_PHASE_STATES = Object.freeze({
+      dispatching: ['', 'connecting', 'resolving-session', 'creating-session', 'setting-model', 'prompting'],
+      running: ['waiting', 'receipt', 'fetching-receipt'],
+    });
+    /** 四态中文标签（与 host IN_FLIGHT_STATE_LABELS 逐字一致）；压缩中留词条备用（无信号不产出）。 */
+    const TASK_STATE_LABELS = Object.freeze({
+      dispatching: '下发中',
+      running: '执行中',
+      compacting: '压缩中',
+      finished: '已结束',
+      unknown: '未知',
+    });
+
+    /**
+     * 单条在途记录 → 四态之一（'dispatching' | 'running' | 'unknown'；'finished' 在途表里不可能）。
+     * @param {object} record StatusPayload.inFlight[] 的单条（{sessionKey, sessionId, startedAt, phase}）
+     */
+    function taskStateOf(record) {
+      const phase = record !== null && record !== undefined && typeof record.phase === 'string' ? record.phase : '';
+      if (TASK_PHASE_STATES.running.includes(phase)) return 'running';
+      if (TASK_PHASE_STATES.dispatching.includes(phase)) return 'dispatching';
+      return 'unknown';
+    }
+
+    /**
+     * 状态标签判定 —— 卡片上回答"这个 harness 现在是什么状态"的那一个符号。
+     *
+     * 判定顺序（与 WorkBuddy 卡同一词表、同一优先序）：
+     *   ① 总闸关（`config.enabled === false`）⇒ 未开启；
+     *   ② 在途 >0 ⇒ 任务下发中（有记录处于下发阶段）／工作中（其余）—— "正在干活"是最鲜活的事实；
+     *   ③ `probe.installed === false` 或 `registry === 'SERVICE_MISSING'` ⇒ 未启动
+     *      （installed 优先于 registry 文字：探测结论是证据，registry 是注册流程的账）；
+     *   ④ REGISTERED / UNREGISTERED / DEGRADED ⇒ 已启动
+     *      （都是"服务在"；UNREGISTERED 多半只是总闸没开、DEGRADED 是带残缺可用）；
+     *   ⑤ 载荷未到达 / registry 未知值 ⇒ 未探测 —— **不**在没证据时宣称"已启动"。
+     * ★ 四态（下发中/执行中/压缩中/已结束）是**任务**的状态（在途逐条呈现，见 TaskBlock）；
+     *   这里给的是 harness 的**总状态**（用户口径：未启动/已启动/未开启/工作中/任务下发中…）。
      *
      * @param {object|null|undefined} status StatusPayload（未到达为 null）
-     * @returns {{slug: 'unknown'|'service-missing'|'ready', text: string}}
+     * @returns {{slug: 'unknown'|'off'|'dispatching'|'working'|'not-started'|'ready', text: string}}
      */
     function badgeOf(status) {
       if (status === null || status === undefined) {
         return { slug: 'unknown', text: L.badge.unknown };
       }
+      // ① 总闸关（config 缺席 = 没读到 ⇒ 不算"关"，继续往下判）。
+      const config = status.config !== null && typeof status.config === 'object' ? status.config : null;
+      if (config !== null && config.enabled === false) {
+        return { slug: 'off', text: L.badge.off };
+      }
+      // ② 在途作业 —— "任务下发中"优先于"工作中"（更具体、更早的阶段）。
+      const inFlight = Array.isArray(status.inFlight) ? status.inFlight : [];
+      if (inFlight.length > 0) {
+        const dispatching = inFlight.some((record) => taskStateOf(record) === 'dispatching');
+        return dispatching
+          ? { slug: 'dispatching', text: L.badge.dispatching }
+          : { slug: 'working', text: L.badge.working };
+      }
+      // ③ 服务面（探测结论优先于 registry 文字）。
       const registry = typeof status.registry === 'string' ? status.registry : '';
       const probe = status.probe !== null && typeof status.probe === 'object' ? status.probe : null;
       if (registry === 'SERVICE_MISSING' || (probe !== null && probe.installed === false)) {
-        return { slug: 'service-missing', text: L.badge.serviceMissing };
+        return { slug: 'not-started', text: L.badge.notStarted };
       }
+      // ④ 服务在（probe.installed===true 单独**不**算数：没证据不宣称"已启动"—— 判据与旧版一致，
+      //    探测结论只在反向（installed===false ⇒ 未启动）时优先）。
       if (registry === 'REGISTERED' || registry === 'UNREGISTERED' || registry === 'DEGRADED') {
         return { slug: 'ready', text: L.badge.ready };
       }
@@ -360,6 +425,20 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 在途等待时长（人话；startedAt 无效 ⇒ 空串，不编）。
+     * ★ 时钟回拨（Date.now() < startedAt）夹到 0，不印负数。
+     * @param {unknown} startedAt
+     */
+    function formatWait(startedAt) {
+      if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || startedAt <= 0) return '';
+      const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      if (s < 60) return s + ' 秒';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + ' 分 ' + (s % 60) + ' 秒';
+      return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分';
+    }
+
+    /**
      * 回执摘录：折叠空白 → 截断（>REPLY_EXCERPT_LIMIT 加 `…`）→ 空正文说"（无正文）"。
      * ★ 三种结果都不留给用户空白（空正文与没读到正文不是同一件事，但都必须说出来）。
      */
@@ -424,7 +503,9 @@ window.__ModuleLoader__.load({
       '.dsh-oc-toast{display:flex;align-items:center;gap:8px;border-radius:8px;padding:8px 10px;background:var(--dsw-alias-fill-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-state-warn-primary);font-size:13px;line-height:1.5;cursor:pointer}' +
       '.dsh-oc-badge{flex:none;padding:1px 8px;border-radius:999px;white-space:nowrap;background:var(--dsw-alias-fill-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6}' +
       '.dsh-oc-badge--ready{color:var(--dsw-alias-state-business-primary)}' +
-      '.dsh-oc-badge--service-missing{color:var(--dsw-alias-state-warn-primary)}' +
+      '.dsh-oc-badge--working{color:var(--dsw-alias-state-business-primary)}' +
+      '.dsh-oc-badge--dispatching{color:var(--dsw-alias-state-business-primary)}' +
+      '.dsh-oc-badge--not-started{color:var(--dsw-alias-state-warn-primary)}' +
       '.dsh-oc-row{display:grid;grid-template-columns:5.5em minmax(0,1fr);align-items:center;column-gap:12px;row-gap:3px;font-size:13px;line-height:1.5}' +
       '.dsh-oc-row__label{color:var(--dsw-alias-label-secondary)}' +
       '.dsh-oc-row__hint{grid-column:1/-1;color:var(--dsw-alias-label-tertiary);font-size:12px}' +
@@ -481,7 +562,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** 三态徽标（判定见 badgeOf；类名 slug 供样式区分语气）。 */
+    /** 状态标签（判定见 badgeOf；类名 slug 供样式区分语气）。 */
     function StatusBadge(props) {
       const decided = badgeOf(props.status);
       return h('span', { className: 'dsh-oc-badge dsh-oc-badge--' + decided.slug }, decided.text);
@@ -594,7 +675,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 任务块：在途计数 + 最近一轮下发摘要 —— 主视图全是人话/可核对读数。
+     * 在途单行文案：`· 下发中 · 亲和键：k1 · 已等待 8 秒`。
+     * - 状态标签来自 TASK_STATE_LABELS（未知 ⇒ 「未知」，**不印原始 phase 枚举**）；
+     * - 亲和键缺 ⇒ 用会话 id；都缺 ⇒ 省略该段（不编）；
+     * - 等待时长：startedAt 有效才算（见 formatWait；无效 ⇒ 不写该段）。
+     * @param {object} record StatusPayload.inFlight 的单条
+     * @param {object} t L.task 文案表
+     */
+    function inflightLine(record, t) {
+      const r = record !== null && typeof record === 'object' ? record : {};
+      const bits = [TASK_STATE_LABELS[taskStateOf(r)]];
+      const key = typeof r.sessionKey === 'string' && r.sessionKey !== ''
+        ? r.sessionKey
+        : (typeof r.sessionId === 'string' ? r.sessionId : '');
+      if (key !== '') bits.push(t.keyPrefix + key);
+      const waited = formatWait(r.startedAt);
+      if (waited !== '') bits.push(t.inflightWaited(waited));
+      return '· ' + bits.join(' · ');
+    }
+
+    /**
+     * 任务块：在途四态逐条 + 最近一轮下发摘要 —— 主视图全是人话/可核对读数。
      *
      * 纪律：
      *   · 只在 `status` 非空时由卡片渲染（载荷未到达 ⇒ 不编造任何一行）；
@@ -609,12 +710,18 @@ window.__ModuleLoader__.load({
       const t = L.task;
       const lines = [];
       const fold = [];
-      // ① 在途：>0 才有这一行（空态不写"在途作业：无"—— 少一行不构成隐瞒，多一行空话才是噪音）。
-      const inFlight = Array.isArray(status.inFlight) ? status.inFlight.length : 0;
-      if (inFlight > 0) {
+      // ① 在途：>0 才有这一段（空态不写"在途作业：0"—— 少一行不构成隐瞒，多一行空话才是噪音）。
+      //    ★ 四态如实（用户口径）：每条一行 —— 状态标签（下发中/执行中/未知）+ 亲和键 + 已等待；
+      //      「压缩中」当前无信号 ⇒ 不出此态；在途表里**不可能**出现「已结束」（收敛即出表）。
+      //      **原始 phase 枚举不上主视图**（标签是人话；枚举在工具面与折叠里核对）。
+      const inFlightRecords = Array.isArray(status.inFlight) ? status.inFlight : [];
+      if (inFlightRecords.length > 0) {
         lines.push(
-          h('div', { className: 'dsh-oc-status__line', 'data-kv': '', key: 'inflight' }, t.inFlightSome(String(inFlight))),
+          h('div', { className: 'dsh-oc-status__line', 'data-kv': '', key: 'inflight' }, t.inFlightSome(String(inFlightRecords.length))),
         );
+        for (let i = 0; i < inFlightRecords.length; i += 1) {
+          lines.push(h('div', { className: 'dsh-oc-status__line', key: 'inflight-' + String(i) }, inflightLine(inFlightRecords[i], t)));
+        }
       }
       const lastRun = status.lastRun !== null && typeof status.lastRun === 'object' ? status.lastRun : null;
       if (lastRun === null) {
@@ -640,6 +747,20 @@ window.__ModuleLoader__.load({
             t.outcomePrefix + enumText(t.outcomes, lastRun.outcome, L.shell.unknownText),
           ),
         );
+        // ③b ★「无终态回执 ≠ 已结束」（用户红线；判据与 host `launch/in-flight-states.js` 的
+        //    projectLastRun 同源）：超时/中止 ⇒ 可能仍在跑；idle 但无终态回执 ⇒ 未收到回执 ——
+        //    两种都不许读成"已结束"。有终态 outcome（成功/失败/已中断）时**不画**本行。
+        {
+          const waitStatus = typeof lastRun.waitStatus === 'string' ? lastRun.waitStatus : '';
+          const terminal = lastRun.outcome === 'succeeded' || lastRun.outcome === 'failed' || lastRun.outcome === 'interrupted';
+          // ★ timeout/aborted **无条件**警示（判据同 host：不收敛比 outcome 的新鲜度更根本——
+          //   超时一刻读到的 outcome 可能是上一轮残留，不得据此当"已结束"）。
+          if (waitStatus === 'timeout' || waitStatus === 'aborted') {
+            lines.push(h('div', { className: 'dsh-oc-status__line dsh-oc-warn', key: 'unfinished' }, t.unfinishedRunning));
+          } else if (waitStatus === 'idle-204' && !terminal) {
+            lines.push(h('div', { className: 'dsh-oc-status__line dsh-oc-warn', key: 'unfinished' }, t.unfinishedNoReceipt));
+          }
+        }
         // ④ 回执（成功也要有正文 —— 摘录见 replyExcerpt；全文在工具面）。
         lines.push(
           h(
@@ -807,8 +928,8 @@ window.__ModuleLoader__.load({
       }
       if (status === null || status === undefined) {
         lines.push(h('div', { className: 'dsh-oc-status__line', key: 'loading' }, s.runtimeLoading));
-      } else if (badgeOf(status).slug === 'service-missing') {
-        // 服务缺失时给一句可执行的话（唯一动作：把桌面端打开）。
+      } else if (badgeOf(status).slug === 'not-started') {
+        // 未启动时给一句可执行的话（唯一动作：把桌面端打开）。
         lines.push(h('div', { className: 'dsh-oc-status__line', key: 'missing' }, s.serviceMissing));
       }
       lines.push(...approvalsLines(status));
@@ -970,7 +1091,7 @@ window.__ModuleLoader__.load({
           // ③ 配置组：总闸 + 模型 + 档位 + 五个字段行。
           h('div', { className: 'dsh-oc-group', key: 'controls' }, [
             h('div', { className: 'dsh-oc-block-title', key: 'title' }, L.config.blockTitle),
-            // ★ 总闸只在**不可写**时置灰 —— 服务缺失**不**禁用开关：enabled 是授权总闸，
+            // ★ 总闸只在**不可写**时置灰 —— 未启动**不**禁用开关：enabled 是授权总闸，
             //   "开了但服务没起来"是合法状态（reason-codes.js 里 service_missing 就是为此存在的），
             //   禁用反而让用户没法提前配好。
             h(SwitchRow, {
