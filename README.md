@@ -6,6 +6,8 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成看得见、可调度、�
 >
 > 一 harness 一包：`packages/plugin-workbuddy`（WorkBuddy 桌面端，下文能力面以它为准）与
 > `packages/plugin-opencode`（OpenCode 桌面端，2026-10-15 落地，见包内 README 与 `04-docs/CHECK-20261015-opencode.md`）。
+> 设置页里两者由 `packages/plugin-harness-hub` 合并为**「Harness 接入」父条目**下的两个标签页
+> （各卡抬头是运行态**状态标签**：未开启 / 未启动 / 工作中 / 任务下发中…）。
 
 ---
 
@@ -105,13 +107,13 @@ npm run link:dsh-deps
 
 ## 使用
 
-工具只暴露给主控模型（`workbuddy_run` / `workbuddy_status`）。调不调用由 LLM 自主决定，人在 DshAgentHub 里只管交代事。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
+工具只暴露给主控模型（WorkBuddy：`workbuddy_run` / `workbuddy_status`；OpenCode：`opencode_run` / `opencode_status` / `opencode_approvals` / `opencode_purge`）。调不调用由 LLM 自主决定，人在 DshAgentHub 里只管交代事。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
 
 ---
 
 ## 设置卡片
 
-设置页里 WorkBuddy 那张卡片（DshAgentHub 插件）显示五样东西：**模型与倍率**、**推理强度档位**、**剩余积分**、**每日签到**、**运行状态**。
+设置 → **Harness 接入 → WorkBuddy** 那张卡片（DshAgentHub 插件）显示五样东西：**模型与倍率**、**推理强度档位**、**剩余积分**、**每日签到**、**运行状态**；卡抬头是运行态**状态标签**（未开启 / 未安装 / 检测中 / 工作中（N）/ 未启动 / 功能受限 / 已启动 / 已开启 —— 桌面端死活以真实归因码为证据，无证据只说到「已开启」，不硬说「已启动」）。OpenCode 卡片在相邻标签页，同款位置另见其包内 README。
 
 - 模型后面带倍率标注（如 `x0.51`）；没有倍率的显示"倍率未知"，仍然可选；
 - 推理强度档位来自桌面端的实际能力表，标注哪些可选、哪些置灰；

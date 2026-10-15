@@ -2,10 +2,24 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
-## [Unreleased] - 2026-10-15
+## [0.4.0] - 2026-10-16
+
+### 本次更新的目的
+
+本版把「一个大脑、多个桌面 harness」落成完整形态。**OpenCode 接入随本版交付**（第二个桌面 harness：
+八步契约映射到桌面端本机 HTTP 服务，四件工具 + 审批面）；设置页里两个 harness 卡片合并为**「Harness 接入」**
+父条目（一 harness 一标签页）；卡片抬头给出**运行态状态标签**（未开启 / 未探测 / 未启动 / 已启动 / 工作中 /
+任务下发中…）；opencode 任务**四态如实**（下发中 / 执行中 / 压缩中¹ / 已结束——无终态回执绝不算已结束）；
+两包系统提示词声明**并发预算**（单 harness ≤3 / 合计 ≤4）；WorkBuddy 完成**同会话两轮复用**真机闭环。
+部署方式不变：junction + 重启 DSH。
+
+> ¹「压缩中」当前无可观察信号 ⇒ 如实留空（补信号最小路径见 `packages/plugin-opencode/src/host/launch/in-flight-states.js` 文件头）。
 
 ### 变更（Changed）
 - **项目定义更新（2026-10-15）**：dsh 作为大脑，向本机桌面 harness 下发「可视化任务」——拒绝任何形式反代、全部可视化；流程契约八步（创建对话 / 工作目录 / 模型 / 思考强度 / 下发 / 会话复用 / 回执 / 审批）。新增 [`CHARTER.md`](./CHARTER.md)（最高准则，含主理人原话存档）与 [`AGENTS.md`](./AGENTS.md)（agent 操作手册）；README 顶部挂准则入口。
+- **发布策略：不再提供打包发布版**（Owner 决策 2026-10-10）。GitHub 三个 Release 与版本
+  tag（v0.2.1/0.2.2/0.2.3）已删除，本地 release zip 已清；仓库无打包/发布工作流。部署
+  唯一路径 = junction 指向本仓库 + 重启 DSH。README「发布」节同步改写。
 
 ### 修复（Fixed）
 - **fix(dev): 依赖链接适配 DSH 0.2.0-rc.2 桌面端布局（asar 物化）** —— 桌面端更新后框架包（cordis / schemastery /
@@ -21,7 +35,17 @@
   ⇒「智能团队」UI 整个不见。补 `root: !!js dshHomePath('sessions')`（与 dsh-base 基础条目
   同库，团队成员本就是 Lead 会话树下的子会话）。缺陷自初始提交即在场，DSH 升级后
   schema 校验变严格才暴露。复现/验证：`04-docs/FIX-20261010-team-persistence-root.md`。
+- **fix(workbuddy): 续接 / 委派权限 / 清理三处真源修复** —— `resume:true` 直建续接打通（不再误回退点火）；
+  委派权限读回改直读真源、`lastRun` 同源修复，**读回失败显式标注**（不猜、不静默）；`workbuddy_purge`
+  精准清理面。见提交 `341c593` / `5a579e6`。
+- **fix(workbuddy): 零进程出口清账 + 测试隔离/不变量重构** —— 死代码与歧义出口清理、测试夹具与真库
+  隔离护栏加固（提交 `266869d`）。
+
 ### 新增（Added）
+- **OpenCode 接入（`packages/plugin-opencode` v0.1.0）**：第二个桌面 harness —— 八步契约映射到桌面端
+  **本机 HTTP 服务**（`service.json` 地址 + 口令；零 CLI、零反代、不代启停桌面端）；模型面工具 4 件
+  （`opencode_run` / `opencode_status` / `opencode_approvals` / `opencode_purge`）；审批面支持列待批 +
+  回复决定（`permission.reply`）。验收：`04-docs/CHECK-20261015-opencode.md`。
 - **插件使用说明 `packages/plugin-workbuddy/README.md`**（此前 `files` 声明了却从不存文件，
   本次新建）：工具用法、智能团队用法（`spawn_teammate(name="workbuddy",
   description="WorkBuddy · …")` → 成员调 `workbuddy_run` 下发）、硬约束（唯一桌面端通道 /
@@ -43,11 +67,11 @@
   数字断言 + 突变自检证明断言有判别力。
 - **WorkBuddy 同会话两轮复用真机闭环**：Round1 队列点火建会话（暗号）→ Round2 **CDP 追发同一条对话**
   复述暗号；落库恰 1 行会话、`updated_at` 推进（`tmp/smoke-wb-reuse-2r.log`）。
-### 变更（Changed）
-- **发布策略：不再提供打包发布版**（Owner 决策 2026-10-10）。GitHub 三个 Release 与版本
-  tag（v0.2.1/0.2.2/0.2.3）已删除，本地 release zip 已清；仓库无打包/发布工作流。部署
-  唯一路径 = junction 指向本仓库 + 重启 DSH。README「发布」节同步改写。
+
 ### 维护（Chore）
+- 红线覆盖表登记 `plugin-opencode` 探针行（提交 `2575d32`）；broker 取消支路探针注入补测（真机 endpoint
+  会留不灭 Pipe 句柄，提交 `35f1a95`）；`04-docs` 记录 DSH profile 工具面修复（preset-partner 默认预设，
+  提交 `f6c6082`）。
 - `test:host` 清单对齐磁盘：移除已删的 `gateway-portmap.test.js`、补入 `status-anti-prune.test.js`（38 个文件全在盘）。
 - 门禁挂载与终验：`test:client` 纳入 hub 卡片测试、`test:host` 纳入 opencode `runtime-locks`；本轮三闸 = 红线 4/4 + 宿主 682/682 + UI 139/139（2026-10-15 深夜收口轮）。
 
