@@ -85,6 +85,5 @@
 - **`cordis.patch.yml`**：行 `id` 必须 = 包名（`dsh-plugin-opencode`），否则
   `settings.update()` 抛 `No configurable plugin entry`（workbuddy 同款教训）。
 - **红线**：改动任何一条红线脚本（含 `check-consumed-knobs.mjs` 的 PROBE_TARGETS 覆盖表）
-  之前先写论证报告到 `04-docs/`（本包 2026-10-15 的条目见
-  `04-docs/REPORT-20261015-redline-probe-target-opencode.md`）。
+  之前先写论证报告（本包 2026-10-15 已登记：探针覆盖表新增本包一行）。
 - **本机事实文件**：`00-recon/OPENCODE-LOCAL-RECON-20261015.md`（本地资料，gitignore）。

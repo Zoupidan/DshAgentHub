@@ -89,9 +89,10 @@ RC-*
 /contracts/
 /CODEMAP.md
 /HANDOFF.md
-/04-docs/_archive/
-/04-docs/GLOSSARY.md
-/04-docs/MODULE-WORKFLOW.md
+/04-docs/
+/DEAD_ENDS.md
+/PRODUCT-FEEDBACK.md
+/PROJECT.md
 /packages/plugin-workbuddy/scripts/
 
 

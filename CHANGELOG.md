@@ -34,7 +34,7 @@
   `ValidationError: $.root missing required value`）。team 栈依赖持久化会话存储才激活
   ⇒「智能团队」UI 整个不见。补 `root: !!js dshHomePath('sessions')`（与 dsh-base 基础条目
   同库，团队成员本就是 Lead 会话树下的子会话）。缺陷自初始提交即在场，DSH 升级后
-  schema 校验变严格才暴露。复现/验证：`04-docs/FIX-20261010-team-persistence-root.md`。
+  schema 校验变严格才暴露。
 - **fix(workbuddy): 续接 / 委派权限 / 清理三处真源修复** —— `resume:true` 直建续接打通（不再误回退点火）；
   委派权限读回改直读真源、`lastRun` 同源修复，**读回失败显式标注**（不猜、不静默）；`workbuddy_purge`
   精准清理面。见提交 `341c593` / `5a579e6`。
@@ -45,7 +45,7 @@
 - **OpenCode 接入（`packages/plugin-opencode` v0.1.0）**：第二个桌面 harness —— 八步契约映射到桌面端
   **本机 HTTP 服务**（`service.json` 地址 + 口令；零 CLI、零反代、不代启停桌面端）；模型面工具 4 件
   （`opencode_run` / `opencode_status` / `opencode_approvals` / `opencode_purge`）；审批面支持列待批 +
-  回复决定（`permission.reply`）。验收：`04-docs/CHECK-20261015-opencode.md`。
+  回复决定（`permission.reply`）。
 - **插件使用说明 `packages/plugin-workbuddy/README.md`**（此前 `files` 声明了却从不存文件，
   本次新建）：工具用法、智能团队用法（`spawn_teammate(name="workbuddy",
   description="WorkBuddy · …")` → 成员调 `workbuddy_run` 下发）、硬约束（唯一桌面端通道 /
@@ -53,8 +53,7 @@
 - **设置「Harness 接入」父条目（hub 合并）**：新包 `packages/plugin-harness-hub` ——
   设置导航栏里 WorkBuddy / OpenCode 卡片不再各占一条，收进同一父条目的两个子标签
   （子槽 `settings.harness-hub.tab`；标签位次 10/20）。两包注册迁移后，DSH 桌面端**真机目验通过**
-  （父条目可见 / 两标签可切换 / 面板互斥渲染 / 零崩溃日志；截图 `tmp/dsh-hub-nav-20261015.png`、
-  `tmp/dsh-hub-tabs-20261015.png`）；「槽未声明时静默不发生」⇒ 壳不在场时父是唯一入口、不留孤儿。
+  （父条目可见 / 两标签可切换 / 面板互斥渲染 / 零崩溃日志）；「槽未声明时静默不发生」⇒ 壳不在场时父是唯一入口、不留孤儿。
 - **卡片状态标签（运行态如实呈现）**：opencode 六态 `未开启/未探测/未启动/已启动/工作中/任务下发中`；
   workbuddy 八态 `未开启/未安装/检测中/工作中（N）/未启动/功能受限/已启动/已开启`（桌面端死活以
   credits/checkin 的 `workbuddy_desktop_closed` 归因码为负向证据、ok/live 为正向证据；**无证据不宣称
@@ -66,12 +65,11 @@
 - **并发预算句**：两包系统提示词（就绪/可用分支）声明「单 harness ≤3、全部 harness 合计 ≤4（dsh 协调）」；
   数字断言 + 突变自检证明断言有判别力。
 - **WorkBuddy 同会话两轮复用真机闭环**：Round1 队列点火建会话（暗号）→ Round2 **CDP 追发同一条对话**
-  复述暗号；落库恰 1 行会话、`updated_at` 推进（`tmp/smoke-wb-reuse-2r.log`）。
+  复述暗号；落库恰 1 行会话、`updated_at` 推进。
 
 ### 维护（Chore）
 - 红线覆盖表登记 `plugin-opencode` 探针行（提交 `2575d32`）；broker 取消支路探针注入补测（真机 endpoint
-  会留不灭 Pipe 句柄，提交 `35f1a95`）；`04-docs` 记录 DSH profile 工具面修复（preset-partner 默认预设，
-  提交 `f6c6082`）。
+  会留不灭 Pipe 句柄，提交 `35f1a95`）；DSH profile 工具面修复记录（preset-partner 默认预设，提交 `f6c6082`）。
 - `test:host` 清单对齐磁盘：移除已删的 `gateway-portmap.test.js`、补入 `status-anti-prune.test.js`（38 个文件全在盘）。
 - 门禁挂载与终验：`test:client` 纳入 hub 卡片测试、`test:host` 纳入 opencode `runtime-locks`；本轮三闸 = 红线 4/4 + 宿主 682/682 + UI 139/139（2026-10-15 深夜收口轮）。
 
