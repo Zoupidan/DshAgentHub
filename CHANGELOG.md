@@ -8,6 +8,12 @@
 - **项目定义更新（2026-10-15）**：dsh 作为大脑，向本机桌面 harness 下发「可视化任务」——拒绝任何形式反代、全部可视化；流程契约八步（创建对话 / 工作目录 / 模型 / 思考强度 / 下发 / 会话复用 / 回执 / 审批）。新增 [`CHARTER.md`](./CHARTER.md)（最高准则，含主理人原话存档）与 [`AGENTS.md`](./AGENTS.md)（agent 操作手册）；README 顶部挂准则入口。
 
 ### 修复（Fixed）
+- **fix(dev): 依赖链接适配 DSH 0.2.0-rc.2 桌面端布局（asar 物化）** —— 桌面端更新后框架包（cordis / schemastery /
+  dsh-tools …）被打进 `resources\app.asar`，旧的 `<Roaming>\<dist>\dependencies\…` 明文 scope 消失 ⇒ 仓库测试整组断链
+  （10 文件 ERR_MODULE_NOT_FOUND、67 题 skip）。新增 `tools/dev/extract-dsh-framework.mjs`（离线把 asar 的
+  `dsh/node_modules` 12,412 文件 / 350.1 MB 物化到 `%LOCALAPPDATA%\dsh-framework-scope\<version>\`，幂等、
+  `--force`/`--check`）；`link-dsh-deps` 找不到完整 scope 时自动调用它，候选来源扩为「显式 > 抽取体 > 旧明文布局」，
+  并修掉 `findScope()` 缺 `continue` 把死路径当 fallback 的缺陷。修复后 `test:host` 603/603、`test:client` 83/83、四红线全绿。
 - **fix(team): dsh 智能团队界面整体消失的根因修复** —— `cordis.patch.yml` 的
   `dsh-session-persistence-jsonl-team` 条目漏写 `config.root`，撞
   `dsh-session-persistence-jsonl` 的 `root: z.string().required()`（boot 日志实锤

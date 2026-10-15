@@ -3,6 +3,12 @@
  * 把仓库内各插件包的 `node_modules/@deepseek-ai` 以【目录 junction】指向本机 dsh 安装体的
  * `node_modules/@deepseek-ai` scope 目录。
  *
+ * 【scope 来源与 2026-10-15 变更】DSH 0.2.0-rc.2 桌面端把框架包打包进 resources\app.asar
+ * （旧 <Roaming>/<dist>/dependencies/… 明文布局随升级消失）⇒ 磁盘上无现成 scope 时，本脚本会先调用
+ * tools/dev/extract-dsh-framework.mjs 把 asar 的 dsh/node_modules 物化到
+ * %LOCALAPPDATA%\dsh-framework-scope\（幂等、离线、不执行 npm/pnpm），再建立 junction。
+ * 候选来源顺序：DSH_DEPS_SCOPE > 抽取体（默认根内，新者优先）> 旧 Roaming 明文布局。
+ *
  * 为什么需要（第一性）：T02 验收测试要求**真实的** `defineTool` / cordis 依赖（stub 无法证明
  * schema 编译、fiber 归属、effect 语义）。junction 使 `import '@deepseek-ai/dsh-tools'` 在仓库内可解析，
  * 而无需 `npm install`（该前提仍受 V24 数据根争用闭环约束，见 CONTRIBUTING）。
@@ -39,17 +45,42 @@ const REQUIRED = [
   'dsh-jobs',
   'dsh-settings',
   'dsh-system-prompt',
+  'dsh-subagent',
+  'dsh-llm',
+  'dsh-agent',
+  'dsh-brand',
 ];
+
+function localAppData() {
+  return process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+}
+
+function mtimeOf(path, fallback) {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return fallback;
+  }
+}
 
 function scopeCandidates() {
   const list = [];
   const explicit = process.env.DSH_DEPS_SCOPE;
   if (typeof explicit === 'string' && explicit.trim() !== '') list.push(resolve(explicit.trim()));
+  // 2026-10-15 布局：桌面端 app.asar 物化体（tools/dev/extract-dsh-framework.mjs 落盘）：
+  //   <root>/dsh-desktop-<ver>-<commit>/dsh/node_modules/@deepseek-ai（新者优先）
+  const extractedRoot = process.env.DSH_FRAMEWORK_ROOT ?? join(localAppData(), 'dsh-framework-scope');
+  if (existsSync(extractedRoot)) {
+    const dirs = readdirSync(extractedRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    dirs.sort((a, b) => mtimeOf(join(extractedRoot, b.name), 0) - mtimeOf(join(extractedRoot, a.name), 0));
+    for (const entry of dirs) list.push(join(extractedRoot, entry.name, 'dsh', 'node_modules', '@deepseek-ai'));
+  }
+  // 旧 CLI 发行版布局（保留探测，兼容仍以明文 node_modules 安装的形态）：
+  //   <Roaming>/<dist>/dependencies/dsh/node_modules/@deepseek-ai
   const roaming = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming');
   if (existsSync(roaming)) {
     for (const entry of readdirSync(roaming, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      // 本机实测布局：<Roaming>/<dist>/dependencies/dsh/node_modules/@deepseek-ai
       list.push(join(roaming, entry.name, 'dependencies', 'dsh', 'node_modules', '@deepseek-ai'));
     }
   }
@@ -62,7 +93,8 @@ function findScope() {
     try {
       if (!statSync(candidate).isDirectory()) continue;
     } catch {
-      /* 不存在/无权限 ⇒ 试下一个 */
+      /* 不存在/无权限 ⇒ 试下一个（缺这个 continue 曾把死路径误当 fallback，2026-10-15 修） */
+      continue;
     }
     if (fallback === null) fallback = candidate;
     // 优先「关键包齐全」的 scope：换发行版后旧 Roaming 目录可能残留半删状态，
@@ -96,20 +128,38 @@ function pluginPackageDirs() {
     .map((e) => join(packagesDir, e.name));
 }
 
-const scope = findScope();
+function missingRequiredIn(dir) {
+  if (dir === null) return [...REQUIRED];
+  return REQUIRED.filter((name) => !existsSync(join(dir, name, 'package.json')));
+}
+
+let scope = findScope();
+let missingRequired = missingRequiredIn(scope);
+
+// 2026-10-15：桌面端把框架打进 app.asar，磁盘无明文 scope ⇒ 先物化（幂等）再重找。
+if (!checkOnly && (scope === null || missingRequired.length > 0)) {
+  try {
+    const { ensureFrameworkScope } = await import('./extract-dsh-framework.mjs');
+    const ensured = ensureFrameworkScope();
+    if (ensured.ok && ensured.scope) {
+      scope = findScope();
+      missingRequired = missingRequiredIn(scope);
+    } else if (!ensured.ok) {
+      console.log(`[link-dsh-deps] ${ensured.message ?? ensured.reason ?? '抽取器未就绪'}`);
+    }
+  } catch (error) {
+    console.log(`[link-dsh-deps] 抽取器异常：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 if (scope === null) {
   console.log('[link-dsh-deps] 未找到本机 dsh 安装体的 @deepseek-ai scope。');
   console.log('  探测过的位置（首个存在者胜）：');
   for (const c of scopeCandidates()) console.log(`    - ${c}`);
-  console.log('  提示：可用 DSH_DEPS_SCOPE=<path> 显式指定；测试将按“依赖不可用”整组 skip。');
+  console.log('  提示：可用 DSH_DEPS_SCOPE=<path> 显式指定；或用 node tools/dev/extract-dsh-framework.mjs 从桌面端 asar 物化；测试将按“依赖不可用”整组 skip。');
   process.exit(checkOnly ? 1 : 0);
 }
 console.log(`[link-dsh-deps] scope: ${scope}`);
-
-let missingRequired = [];
-for (const name of REQUIRED) {
-  if (!existsSync(join(scope, name, 'package.json'))) missingRequired.push(name);
-}
 if (missingRequired.length > 0) {
   console.log(`[link-dsh-deps] ⚠ scope 内缺少关键包：${missingRequired.join(', ')}`);
 }
