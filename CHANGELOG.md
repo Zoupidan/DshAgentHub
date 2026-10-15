@@ -2,7 +2,10 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
-## [Unreleased] - 2026-10-10
+## [Unreleased] - 2026-10-15
+
+### 变更（Changed）
+- **项目定义更新（2026-10-15）**：dsh 作为大脑，向本机桌面 harness 下发「可视化任务」——拒绝任何形式反代、全部可视化；流程契约八步（创建对话 / 工作目录 / 模型 / 思考强度 / 下发 / 会话复用 / 回执 / 审批）。新增 [`CHARTER.md`](./CHARTER.md)（最高准则，含主理人原话存档）与 [`AGENTS.md`](./AGENTS.md)（agent 操作手册）；README 顶部挂准则入口。
 
 ### 修复（Fixed）
 - **fix(team): dsh 智能团队界面整体消失的根因修复** —— `cordis.patch.yml` 的
