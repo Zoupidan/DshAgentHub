@@ -41,11 +41,18 @@
 
 /**
  * 在途作业记账（in-flight run map）。
+ *
+ * 四态投影（下发中/执行中/压缩中/已结束）见 `launch/in-flight-states.js` —— 判定只认下面列的真实值，
+ * 未知值不许硬塞成任一态（尤其不许塞成"压缩中/已结束"）。
  * @typedef {Object} RunRecord
  * @property {string} sessionKey 亲和键
  * @property {string} sessionId opencode 会话 id（'' = 还没建出来）
  * @property {number} startedAt 开始时刻（ms）
- * @property {string} phase 阶段（'resolving-session'|'creating-session'|'setting-model'|'prompting'|'waiting'|'fetching-receipt'）
+ * @property {string} phase 阶段。**实际发出值**（dispatch.js 的 onPhase）：
+ *   ''（首个 phase 未到；run.js:169）| 'connecting' | 'resolving-session' | 'creating-session'
+ *   | 'setting-model' | 'prompting' | 'waiting' | 'receipt'。
+ *   注：本文档曾写 'fetching-receipt'，但代码从未发出该拼写（实际为 'receipt'）——
+ *   投影两个拼写都接受；该不一致已登记在任务报告，未改发出值（改它会改 job_output 的行文）。
  */
 
 /**

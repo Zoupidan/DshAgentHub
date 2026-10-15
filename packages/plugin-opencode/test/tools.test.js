@@ -11,13 +11,14 @@ import { test } from 'node:test';
 
 import { makeApprovalsTool } from '../src/host/tools/approvals.js';
 import { reconcileTools } from '../src/host/tools/index.js';
+import { IN_FLIGHT_STATES, LAST_RUN_STATES, projectLastRun, projectRunRecord } from '../src/host/launch/in-flight-states.js';
 import { makePurgeTool } from '../src/host/tools/purge.js';
 import { makeRunTool } from '../src/host/tools/run.js';
 import { makeStatusTool } from '../src/host/tools/status.js';
 
 // ─────────────────────────── 桩 ───────────────────────────
 
-function makeRuntime({ config = {}, probe = null } = {}) {
+function makeRuntime({ config = {}, probe = null, inFlight = [] } = {}) {
   let registry = 'UNKNOWN';
   let registrationError = null;
   let detected = probe;
@@ -50,7 +51,7 @@ function makeRuntime({ config = {}, probe = null } = {}) {
     forget(jobId) { this._forgotten = jobId; },
     noteRun(rec) { last = rec; },
     lastRun: () => last,
-    inFlight: () => [],
+    inFlight: () => inFlight.map((r) => ({ ...r })),
   };
 }
 
@@ -315,6 +316,152 @@ test('status 工具：探测证据 / 模型 / 记性 / 最近回执 / 待批计�
   assert.match(ret.text, /opencode\/m1 \[free\] · variants: low\/high/);
   assert.match(ret.text, /last run: .*outcome=succeeded/);
   assert.match(ret.text, /approvals: 1 pending/);
+});
+
+// ─────────── 在途四态投影（用户口径 2026-10-15：下发中/执行中/压缩中/已结束） ───────────
+//   映射依据与「压缩中」无信号调查结论 = src/host/launch/in-flight-states.js 文件头（含行号）。
+
+test('projectRunRecord：已知 phase 全表映射；未知值绝不硬塞成压缩中/已结束', () => {
+  const now = 1_000_000;
+  const at = (phase) => projectRunRecord({ sessionKey: 'k', sessionId: 's', startedAt: now - 5_000, phase }, now);
+
+  // 下发中 —— dispatch.js:361/368/391/436/455（'' = 首个 phase 未到；run.js:169）
+  for (const phase of ['', 'connecting', 'resolving-session', 'creating-session', 'setting-model', 'prompting']) {
+    assert.equal(at(phase).state, IN_FLIGHT_STATES.DISPATCHING, `phase=${phase} 应为下发中`);
+    assert.equal(at(phase).label, '下发中');
+  }
+  // 执行中 —— dispatch.js:238('waiting')/272('receipt')；'fetching-receipt' 是文档别名（types/index.js:48）
+  for (const phase of ['waiting', 'receipt', 'fetching-receipt']) {
+    assert.equal(at(phase).state, IN_FLIGHT_STATES.RUNNING, `phase=${phase} 应为执行中`);
+    assert.equal(at(phase).label, '执行中');
+  }
+  // 未知值：如实说"未知"并原样回传 phase（不吞原文）
+  const weird = at('some-future-phase');
+  assert.equal(weird.state, IN_FLIGHT_STATES.UNKNOWN);
+  assert.equal(weird.label, '未知');
+  assert.equal(weird.phase, 'some-future-phase');
+
+  // ★ 硬红线：「压缩中」当前没有可观察信号（调查结论见模块注释）⇒ 现有任何 phase 都不得映射到它；
+  //   在途记录也绝不许显示成"已结束"（run.js:229-230 收敛即 forget，表里必为未结束）。
+  for (const phase of ['', 'connecting', 'resolving-session', 'creating-session', 'setting-model', 'prompting', 'waiting', 'receipt', 'fetching-receipt', 'some-future-phase']) {
+    assert.notEqual(projectRunRecord({ phase }, now).state, IN_FLIGHT_STATES.COMPACTING, `phase=${phase} 不得冒充压缩中`);
+    assert.notEqual(projectRunRecord({ phase }, now).state, IN_FLIGHT_STATES.FINISHED, `phase=${phase} 不得冒充已结束`);
+  }
+
+  // 时长回传：有界、时钟回拨夹 0、坏值 null（不猜）
+  const row = at('waiting');
+  assert.equal(row.waitedMs, 5_000);
+  assert.equal(row.sessionKey, 'k');
+  assert.equal(row.sessionId, 's');
+  assert.equal(projectRunRecord({ phase: 'waiting', startedAt: now + 999 }, now).waitedMs, 0);
+  assert.equal(projectRunRecord({ phase: 'waiting' }, now).waitedMs, null);
+});
+
+test('projectLastRun：终态回执才算已结束；超时/无回执/未受理各有其位（no receipt ≠ finished）', () => {
+  assert.equal(projectLastRun(null).state, LAST_RUN_STATES.NONE);
+
+  // 终态回执三值（idle-204 + 结构化 outcome；与 judge()/receiptView 同源，见模块注释）
+  for (const outcome of ['succeeded', 'failed', 'interrupted']) {
+    const v = projectLastRun({ waitStatus: 'idle-204', outcome, reasonCode: outcome === 'succeeded' ? 'ok' : 'task_failed' });
+    assert.equal(v.finished, true, `outcome=${outcome} 有终态回执 ⇒ 已结束`);
+    assert.equal(v.note, '');
+  }
+  // 等待超时：即使服务端那一刻仍挂着旧 succeeded（新鲜度闸后 outcome=null），也绝不认已结束
+  const timeout = projectLastRun({ waitStatus: 'timeout', outcome: null, reasonCode: 'wait_timeout' });
+  assert.equal(timeout.state, LAST_RUN_STATES.RUNNING);
+  assert.equal(timeout.finished, false);
+  assert.match(timeout.note, /no receipt ≠ finished/);
+  // 取消同理
+  assert.equal(projectLastRun({ waitStatus: 'aborted', outcome: null, reasonCode: 'wait_aborted' }).state, LAST_RUN_STATES.RUNNING);
+  // idle-204 但无终态回执（receipt_missing）⇒ 不许把"空转"折成"结束"
+  const idleNoReceipt = projectLastRun({ waitStatus: 'idle-204', outcome: null, reasonCode: 'receipt_missing' });
+  assert.equal(idleNoReceipt.state, LAST_RUN_STATES.UNRESOLVED);
+  assert.equal(idleNoReceipt.finished, false);
+  assert.match(idleNoReceipt.note, /no receipt ≠ finished/);
+  // 停在审批：判为"未结束"（judge 把它排在最前；回复后可续等）
+  const stuck = projectLastRun({ waitStatus: 'idle-204', outcome: null, reasonCode: 'approval_pending' });
+  assert.equal(stuck.state, LAST_RUN_STATES.RUNNING);
+  assert.match(stuck.note, /stopped at an approval/);
+  // 任务根本没被受理（下发面失败）⇒ not-started，不存在"未结束的任务"
+  assert.equal(projectLastRun({ waitStatus: null, outcome: null, reasonCode: 'prompt_rejected' }).state, LAST_RUN_STATES.NOT_STARTED);
+  // ★ 双保险：outcome 有值但 waitStatus 不是 idle-204（理论上会被 receiptView 拦掉）⇒ 仍不认已结束
+  assert.equal(projectLastRun({ waitStatus: 'timeout', outcome: 'succeeded', reasonCode: 'ok' }).finished, false);
+});
+
+test('status 工具：在途明细逐条 —— key/id 短形 + 四态标签 + 已等待时长；在途必非已结束', async () => {
+  const runtime = makeRuntime({
+    config: { enabled: true },
+    probe: { installed: true, reason: 'ok' },
+    inFlight: [
+      { sessionKey: 'k1', sessionId: '', startedAt: Date.now() - 12_000, phase: 'creating-session' },
+      { sessionKey: 'dir:d:/very/long/workspace/path', sessionId: 'ses_ec039b26effeFSRxqFRSQfPfba', startedAt: Date.now() - 65_000, phase: 'waiting' },
+      { sessionKey: 'k3', sessionId: 'ses_live03', startedAt: Date.now() - 1_000, phase: 'some-future-phase' },
+    ],
+  });
+  const tool = makeStatusTool(runtime, makeSessionsStub(), () => ({ enabled: true }), {
+    models: async () => ({ ok: true, models: [], source: 'stub' }),
+  });
+  const ret = await tool.execute({});
+  assert.match(ret.text, /in-flight: 3 — none finished \(no receipt ≠ finished\)/);
+  assert.match(ret.text, /· k1 → \(no session yet\) \[下发中 dispatching · phase=creating-session\] waited 12s/);
+  assert.match(ret.text, /· dir:d:\/very\/long… → ses_ec039b26effe… \[执行中 running · phase=waiting\] waited 1m05s/);
+  assert.match(ret.text, /· k3 → ses_live03 \[未知 unknown · phase=some-future-phase\] waited 1s/);
+  assert.doesNotMatch(ret.text, /\[已结束/);
+  assert.doesNotMatch(ret.text, /\[压缩中/);
+});
+
+test('status 工具：超时 lastRun + 在途 ⇒ 双双明说未结束（no receipt ≠ finished；在途≠已结束）', async () => {
+  const runtime = makeRuntime({
+    config: { enabled: true },
+    probe: { installed: true, reason: 'ok' },
+    inFlight: [{ sessionKey: 'k1', sessionId: 'ses_x', startedAt: Date.now() - 3_000, phase: 'waiting' }],
+  });
+  runtime.noteRun({
+    sessionId: 'ses_x', sessionKey: 'k1', resumed: false,
+    outcome: null, waitStatus: 'timeout', reasonCode: 'wait_timeout', reasonText: '等待超时：任务可能仍在桌面端运行',
+    reasonEvidence: '', cost: null, model: null, reply: '', permissionRequests: [],
+  });
+  const tool = makeStatusTool(runtime, makeSessionsStub(), () => ({ enabled: true }), {
+    models: async () => ({ ok: true, models: [], source: 'stub' }),
+  });
+  const ret = await tool.execute({});
+  assert.match(ret.text, /\[执行中 running · phase=waiting\]/);
+  assert.match(ret.text, /last run: .*outcome=- wait=timeout reason=wait_timeout/);
+  assert.match(ret.text, /state: NOT finished — the task may still be running/);
+  assert.match(ret.text, /no receipt ≠ finished/);
+  assert.doesNotMatch(ret.text, /outcome=succeeded/);
+});
+
+test('status 工具：idle-204 但无终态回执（receipt_missing）⇒ 不算已结束', async () => {
+  const runtime = makeRuntime({ config: { enabled: true }, probe: { installed: true, reason: 'ok' } });
+  runtime.noteRun({
+    sessionId: 'ses_y', sessionKey: 'k9', resumed: true,
+    outcome: null, waitStatus: 'idle-204', reasonCode: 'receipt_missing', reasonText: '回执缺失',
+    reasonEvidence: '', cost: null, model: null, reply: '', permissionRequests: [],
+  });
+  const tool = makeStatusTool(runtime, makeSessionsStub(), () => ({ enabled: true }), {
+    models: async () => ({ ok: true, models: [], source: 'stub' }),
+  });
+  const ret = await tool.execute({});
+  assert.match(ret.text, /wait=idle-204 reason=receipt_missing/);
+  assert.match(ret.text, /state: NOT finished — the session went idle but this round produced no terminal receipt/);
+  assert.match(ret.text, /no receipt ≠ finished/);
+});
+
+test('status 工具：终态回执 ⇒ 不发未结束告警（已结束面照常出读数）', async () => {
+  const runtime = makeRuntime({ config: { enabled: true }, probe: { installed: true, reason: 'ok' } });
+  runtime.noteRun({
+    sessionId: 'ses_z', sessionKey: 'k2', resumed: false,
+    outcome: 'succeeded', waitStatus: 'idle-204', reasonCode: 'ok', reasonText: '',
+    reasonEvidence: '', cost: 0.5, model: null, reply: 'done', permissionRequests: [],
+  });
+  const tool = makeStatusTool(runtime, makeSessionsStub(), () => ({ enabled: true }), {
+    models: async () => ({ ok: true, models: [], source: 'stub' }),
+  });
+  const ret = await tool.execute({});
+  assert.match(ret.text, /outcome=succeeded/);
+  assert.match(ret.text, /in-flight: \(none\)/);
+  assert.doesNotMatch(ret.text, /state: NOT finished/);
 });
 
 test('purge 工具：默认档不碰服务端；remote:true 明说硬删', async () => {

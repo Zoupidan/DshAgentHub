@@ -580,7 +580,9 @@ test('dispatch.run：等待超时 ⇒ wait_timeout（真等满 5s 下限；任�
       'GET /api/info': { status: 200, body: { version: '2.0.28', pid: 1 } },
       'POST /api/session': { status: 200, body: { data: { id: 'ses_slow' } } },
       'POST /api/session/ses_slow/prompt': { status: 200, body: { data: { id: 'inbox_1' } } },
-      ...routesForSession('ses_slow', { outcome: null }),
+      // ★ 会话此刻仍挂着**上一轮**的 succeeded 回执（真实可能：会话还在跑，outcome 是旧值）——
+      //   超时一刻读到它绝不等于本轮结束（no receipt ≠ finished；judge dispatch.js:304-308）。
+      ...routesForSession('ses_slow', { outcome: 'succeeded' }),
       'POST /api/experimental/session/ses_slow/wait': hangWait,
     };
     const { dispatcher } = makeDispatcher({ routes, calls, env });
@@ -589,6 +591,8 @@ test('dispatch.run：等待超时 ⇒ wait_timeout（真等满 5s 下限；任�
     assert.equal(out.ok, false);
     assert.equal(out.reason, REASON_CODES.WAIT_TIMEOUT);
     assert.equal(out.waitStatus, 'timeout');
+    assert.equal(out.outcome, null, '★ 超时不得拿旧回执冒充本轮（no receipt ≠ finished）');
+    assert.equal(out.reply, '', '★ 非 idle-204 一刻读到的正文不得冒充本轮回执（receiptView 新鲜度闸）');
     assert.ok(Date.now() - started >= 4900, '必须真的等到下限时长');
   } finally {
     cleanup();
