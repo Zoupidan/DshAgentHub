@@ -1,6 +1,6 @@
 # DshAgentHub
 
-DshAgentHub 把本机 agent（首个 WorkBuddy）变成看得见、可调度、可观测的执行方。全程同机，不跨网。
+DshAgentHub 把本机 agent（首个 WorkBuddy）变成**团队里看得见、可调度、可观测的成员**。全程同机，不跨网。
 
 > **项目最高准则：[CHARTER.md](./CHARTER.md)** —— 2026-10-15 项目定义更新：dsh 作为大脑，向本机桌面 harness 下发可视化任务（八步流程：创建对话 → 工作目录 → 模型 → 思考强度 → 下发 → 会话复用 → 回执 → 审批）。凡本仓库文档与该准则冲突处，以 CHARTER 为准，并登记待修。
 >
@@ -21,7 +21,7 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成看得见、可调度、�
 
 | 能力 | 说明 |
 |---|---|
-| 下发任务 | `workbuddy_run` 交代一件事，DshAgentHub 作业面板里有一个对应的作业。 |
+| 下发任务 | 主会话把任务交给名为 `workbuddy` 的团队成员，成员用 `workbuddy_run` 下发；DshAgentHub 作业面板里有一个对应的作业。 |
 | 多轮归组 | 同 `session_key` 可二次下发；默认每轮都是新对话，见下一条。 |
 | 会话复用（多轮追问） | 设置 `enableMultiTurnFollowUp` 开启后：`resume:true` 且记性命中 ⇒ 追发进**同一条对话**继续干（桌面端可见）；追发失败自动回退点火新开，回执与状态卡带 `fallback` 原因。默认关闭。 |
 | 直接点火（免排队） | 设置 `enableDirectIgnition` 开启后（默认关）：点火轮经桌面端 CDP 直接建对话并下发，**零计划任务 INSERT**。派发**前**失败照旧回退自动化队列（回执带 `fallback` / `fallbackReason`，任务不丢）；派发**后**失败**绝不回退**——同一条 prompt 再跑一遍就是双份积分。前置条件见「已知限制」。 |
@@ -50,7 +50,8 @@ OpenCode 侧同款能力：创建 / 复用**可见会话**、下发、等待回�
 ```mermaid
 graph TB
     subgraph DSH["DshAgentHub · dsh（大脑）"]
-        T["工具面 / 委派面<br/>交代一件事：workbuddy_run · opencode_run"]
+        L["主会话（Lead）<br/>委派只走团队面：spawn_teammate → send_message → wait_agent"]
+        M["团队成员：workbuddy / opencode<br/>工具面归成员所有（workbuddy_* / opencode_*）· 成员会话可点开"]
         J["作业面板<br/>一任务一作业 · job_output 看进度"]
         H["设置「Harness 接入」<br/>WorkBuddy / OpenCode 两卡 · 运行态状态标签"]
     end
@@ -63,15 +64,18 @@ graph TB
         OD["OpenCode 会话"]
     end
     R["回执：结构化状态 / 正文 / 用量<br/>无终态回执 ≠ 已结束 · 待批 ⇒ 审批（opencode_approvals）"]
-    T --> J
-    T --> W --> WD
-    T --> O --> OD
+    L -->|委派任务| M
+    M -->|下发| J
+    M -->|下发| W --> WD
+    M -->|下发| O --> OD
     WD -->|回执| R
     OD -->|回执| R
+    R -.回传成员.-> M
+    M -.回报.-> L
     H -.只读状态.-> R
 ```
 
-两个入口（工具面 / 委派面）、两条同机通道（WorkBuddy：自动化队列 + CDP 追发·点火；OpenCode：桌面端本机 HTTP 服务）。任务落在桌面端自己的界面里、看得见；dsh 拿回结构化回执（状态 / 正文 / 用量），需要人拍板的节点走审批。
+委派只有一条路：**团队成员**（工具面归成员所有；v0.5.1 起旧的子代理通道已删除）；两条同机通道（WorkBuddy：自动化队列 + CDP 追发·点火；OpenCode：桌面端本机 HTTP 服务）。任务落在桌面端自己的界面里、看得见；成员拿回结构化回执（状态 / 正文 / 用量）并回报主会话，需要人拍板的节点走审批。
 
 ---
 
@@ -117,7 +121,7 @@ npm run link:dsh-deps
 
 ## 使用
 
-两个 harness 都以 **DshAgentHub 的智能体团队成员**形态接入（v0.5.0 起）：挂载了智能团队的组合里，工具面（WorkBuddy：`workbuddy_*`；OpenCode：`opencode_*`）只对**名为 `workbuddy` / `opencode` 的成员**可见——主控模型经 `spawn_teammate` → `send_message` → `wait_agent` 完成委派，成员在团队面板可见、其会话可点开（工作仍真实落在各自桌面端）。未挂团队的组合自动回退为全局工具的旧形态。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
+两个 harness 都以 **DshAgentHub 的智能体团队成员**形态接入（v0.5.0 起）：挂载了智能团队的组合里，工具面（WorkBuddy：`workbuddy_*`；OpenCode：`opencode_*`）只对**名为 `workbuddy` / `opencode` 的成员**可见——主控模型经 `spawn_teammate` → `send_message` → `wait_agent` 完成委派，成员在团队面板可见、其会话可点开（工作仍真实落在各自桌面端）。未挂团队的组合自动回退为全局工具的旧形态。旧子代理通道（`workbuddy_subagent`）已于 v0.5.1 删除——委派只有成员这一条形态。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
 
 ---
 
@@ -152,7 +156,7 @@ $s = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-workbuddy/status"
 
 `modelsSource` 以 `desktop-live:` 开头表示目录与倍率来自桌面端实时接口；以 `desktop-cache:` 开头表示已回落到本地缓存，目录可能偏少、倍率可能过期。
 
-积分只在这个接口的 `credits` 字段里，`workbuddy_status` 工具输出里没有，去工具面找不到不是问题。
+积分只在这个接口的 `credits` 字段里，`workbuddy_status` 工具输出里没有——在成员回执里找不到积分不是问题。
 
 OpenCode 侧同一套（同样只接受本机请求，只读）：
 
