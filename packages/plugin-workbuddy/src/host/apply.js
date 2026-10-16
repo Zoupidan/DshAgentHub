@@ -25,7 +25,6 @@ import { makeRoutes } from './routes/index.js';
 import { loadSessionMap, sweepOwnSessions } from './session/map.js';
 import { reconcileSubagentProvider } from './subagent/index.js';
 import { reconcileTools } from './tools/index.js';
-import { makeHarvestTool, TOOL_HARVEST } from './tools/harvest.js';
 
 const name = PLUGIN_ID;
 // ★ ⑦ 子智能体面：`subagents` 进 inject 数组，只是让 cordis **知道**要等这个服务；
@@ -161,22 +160,13 @@ function apply(ctx, config) {
   ctx.effect(() => reconcileTools(ctx, {
     runtime, sessions, config, Config, NS, detect: detectWorkBuddy, credits, dispatch, checkin,
   }), `${PLUGIN_ID}: tools`);
-  // ④'' ★ Late-harvest channel tool on ctx.tools (§3.4.1 R2)
-  const harvestTool = makeHarvestTool(runtime, () => runtime.currentConfig(), ctx);
-  if (ctx.tools) {
-    ctx.tools[TOOL_HARVEST] = harvestTool;
-    ctx.tools.harvest = harvestTool;
-    ctx.tools.workbuddy_harvest = harvestTool;
-    if (typeof ctx.tools.get === 'function') {
-      const origGet = ctx.tools.get.bind(ctx.tools);
-      ctx.tools.get = (toolName) => {
-        if (toolName === TOOL_HARVEST || toolName === 'harvest' || toolName === 'workbuddy_harvest') {
-          return harvestTool;
-        }
-        return origGet(toolName);
-      };
-    }
-  }
+  // ④'' ★ Late-harvest 工具（§3.4.1 R2）已并入 ④ 的 `reconcileTools()`（tools/index.js）——
+  //     与其余三件工具同走一把 U4 开关闸（OFF ⇒ 一并注销）。
+  //   ★★ 2026-10-17 修复（0.4.1）：旧实现对共享注册表做了两件越界事——① 把工具对象直挂到
+  //     `ctx.tools` 的三个自有属性上；② 改写 `ctx.tools.get`，且转发时丢掉第二个参数 `scope`。
+  //     `get` / `resolveExecution` 是全进程共享的工具解析入口，改写后一切非全局注册的工具
+  //     （预设挂载的 pwsh / read / write / …）在派发层一律 `unknown tool`——真机全工具面
+  //     丢失事故的根因（见 CHANGELOG [0.4.1]）。回归闸见 test/late-harvest.test.js ⑧。
   // ④' ★ 子智能体面：把 WorkBuddy 注册成**真的** provider（`workbuddy`），而不只是一次工具调用。
   //     收敛判据、失败面与 `reconcileTools` 同款（见 host/subagent/index.js 头注）：
   //     `enabled !== true` ⇒ 不注册；注册失败只落日志，不炸掉本行之后的 ⑤⑥ 装配。

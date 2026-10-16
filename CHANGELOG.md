@@ -2,6 +2,13 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.4.1] - 2026-10-17
+
+### 修复（Fixed）
+
+- **fix(workbuddy)**：修复装配期对 dsh 共享工具注册表的越界改写（此前会替换 `ctx.tools.get`，且转发时丢失作用域参数）——该缺陷会导致 **dsh 会话中除 WorkBuddy 插件自带工具外，其余全部工具（`pwsh` / `read` / `write` / 各预设挂载的全部工具）调用失败并报 `unknown tool`**；现改为经 `ctx.tools.register` 一等注册。同时恢复 `workbuddy_harvest` 出现在模型工具清单中。
+- **测试**：新增「装配不得改写共享注册表」回归闸（`test/late-harvest.test.js` ⑧）。
+
 ## [0.4.0] - 2026-10-16
 
 ### 本次更新的目的

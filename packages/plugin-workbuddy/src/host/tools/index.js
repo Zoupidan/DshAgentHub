@@ -29,6 +29,7 @@ import { disabledSnapshot, readCostCatalog } from '../launch/cost-catalog.js';
 import { makeRunTool } from './run.js';
 import { makeStatusTool } from './status.js';
 import { makePurgeTool } from './purge.js';
+import { makeHarvestTool } from './harvest.js';
 
 /**
  * @param {object} ctx 宿主 ctx（插件级）
@@ -87,6 +88,11 @@ export function reconcileTools(ctx, { runtime, sessions, config, Config, NS, det
         // ★ 精准清理面（施工单 2026-10-10 #3）：软删一条对话 + 清 session map 记性。
         //   db 缺省由工具内部按 WORKBUDDY_HOME 现开（测试注入）。
         next.push(ctx.tools.register(makePurgeTool(runtime, read, ctx, sessions, null)));
+        // ★ 延迟收割面（§3.4.1 R2）：并入同一把 U4 闸 —— 与其余工具同生共死（OFF ⇒ 一并注销）。
+        //   2026-10-17（0.4.1）：此前它绕过注册面，以"直挂 ctx.tools 属性 + 改写 ctx.tools.get"
+        //   的 hack 存在，改写后的 get 会丢掉 scope 参数 ⇒ 真机全工具面丢失事故根因
+        //   （见 apply.js ④'' 注释与 CHANGELOG [0.4.1]）。
+        next.push(ctx.tools.register(makeHarvestTool(runtime, read, ctx)));
       } catch (err) {
         for (const d of next) d();
         runtime.setRegistrationError(err instanceof Error ? err.message : String(err));

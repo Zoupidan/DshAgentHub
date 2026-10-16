@@ -16,7 +16,7 @@
  *      - 参数校验与执行回显；
  *      - 契约与 render 格式化；
  *   ⑤ apply.js 注册联动：
- *      - ctx.tools 上 workbuddy_harvest 注册确认。
+ *      - 共享注册表零改写（0.4.1 回归闸；注册面 = reconcileTools 的 U4 闸）。
  *
  * @module test/late-harvest.test
  */
@@ -404,11 +404,13 @@ test('⑦ workbuddy_harvest 工具实例与执行契约', async () => {
   }
 });
 
-test('⑧ apply.js 装配：ctx.tools 成功挂载 workbuddy_harvest', async () => {
+test('⑧ apply.js 装配：共享注册表零改写（0.4.1 回归闸；注册面由 reconcileTools 承担）', async () => {
+  const originalGet = function get(name, scope) { return null; };
   const mockTools = {
     register: () => () => {},
-    get: () => null,
+    get: originalGet,
   };
+  const ownKeysBefore = Object.getOwnPropertyNames(mockTools).sort().join(',');
   const mockCtx = {
     tools: mockTools,
     subprocess: { spawn: () => {} },
@@ -421,7 +423,13 @@ test('⑧ apply.js 装配：ctx.tools 成功挂载 workbuddy_harvest', async () 
 
   apply(mockCtx, {});
 
-  assert.ok(mockTools[TOOL_HARVEST], 'TOOL_HARVEST 必须挂载在 ctx.tools');
-  assert.ok(mockTools.workbuddy_harvest, 'workbuddy_harvest 必须挂载在 ctx.tools');
-  assert.equal(mockTools.get('workbuddy_harvest').name, 'workbuddy_harvest');
+  // ★ 0.4.1 事故回归闸：装配不得改写共享注册表（旧实现替换 ctx.tools.get 且转发时丢 scope 参数
+  //   ⇒ 预设挂载的工具在派发层全部 unknown tool）。harvest 的注册面现与其余工具同走
+  //   reconcileTools（U4 闸），由 test/host.test.js「判据① + ⑤」覆盖。
+  assert.equal(mockTools.get, originalGet, 'ctx.tools.get 不得被改写');
+  assert.equal(
+    Object.getOwnPropertyNames(mockTools).sort().join(','),
+    ownKeysBefore,
+    'ctx.tools 不得被塞入自有属性（TOOL_HARVEST / harvest / workbuddy_harvest / get 覆盖）',
+  );
 });
