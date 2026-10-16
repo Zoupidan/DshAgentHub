@@ -19,10 +19,7 @@
  *      - automation.retired 为 false
  *      - automation.reason 为 'still_running'
  *      - SQLite automations 表中 deleted_at IS NULL（不调用 retireRow 软删）
- *      - 不调用 sessionStore.forget（不破坏会话记性）
- *   ④ subagent/execute.js 的 reportFromAutomation：
- *      - 识别 still_running 为无错误（ok: true, error: undefined）
- *   ⑤ schema.js 与 cordis.patch.yml 契约：
+ *      - 不调用 sessionStore.forget（不破坏会话记性） *   ⑤ schema.js 与 cordis.patch.yml 契约：
  *      - Config 包含 automationTimeoutMs 且默认值为 900_000，且为 volatile
  *
  * @module test/long-polling.test
@@ -48,7 +45,6 @@ import {
   FAILURE_CODES,
   isFailureCode,
 } from '../src/host/launch/reason-codes.js';
-import { reportFromAutomation } from '../src/host/subagent/execute.js';
 import { Config } from '../src/host/config/schema.js';
 
 const REAL_DB = join(homedir(), '.workbuddy', 'workbuddy.db');
@@ -216,25 +212,6 @@ test('③ startAutomationRun 超时返回 still_running、exitCode 0、不软删
     restore();
     rmSync(home, { recursive: true, force: true });
   }
-});
-
-test('④ subagent/execute.js reportFromAutomation 兼容 still_running 状态', () => {
-  const result = reportFromAutomation({
-    status: 'still_running',
-    detail: 'the run is still running in the desktop',
-    automation: {
-      reason: REASON_CODES.STILL_RUNNING,
-      conversationId: 'mock-conv-123',
-      reply: null,
-      phases: ['awaiting-scheduler-tick', 'running', 'still_running'],
-    },
-  });
-
-  assert.equal(result.ok, true, 'still_running 必须判定为 ok: true');
-  assert.equal(result.reason, REASON_CODES.STILL_RUNNING);
-  assert.equal(result.error, undefined, 'still_running 不得返回 error 对象');
-  assert.equal(result.sessionId, 'mock-conv-123');
-  assert.equal(result.transport, 'automation');
 });
 
 test('⑤ Config 与 cordis.patch.yml 契约声明 automationTimeoutMs', () => {

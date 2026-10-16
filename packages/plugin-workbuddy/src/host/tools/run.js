@@ -873,7 +873,7 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
             runtime.setRegistry(REGISTRY_STATES.REGISTERED);
           }
           const reqPerm = typeof requestedPerm === 'string' ? requestedPerm : '';
-          // ★ 读回修复（施工单 2026-10-10 #2，与 subagent/execute.js reportFromAutomation 同根因）：
+          // ★ 读回修复（施工单 2026-10-10 #2；同根因的另一处 subagent/execute.js 已随收编删除）：
           //   `au.permission` 在终态回执里是**对象** `{requested, effective, confirmed, …}`
           //   （gateway/automation.js 组装点），另有 `effectivePermissionMode` 纯字符串键。
           //   旧代码只认字符串 ⇒ lastRun（workbuddy_status 面）把读回值吞成 '(unknown)'。

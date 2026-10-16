@@ -4,7 +4,7 @@
  * Covers:
  *   1. Path normalization stress testing (Windows casing, slashes, relative, trailing, empty) & lock collision.
  *   2. Concurrency cap stress testing (cap = 3 saturation, reentrancy, recovery, custom cap, forget).
- *   3. Lock release stress testing on errors & validation failures in workbuddy_run and executeTask.
+ *   3. Lock release stress testing on errors & validation failures in workbuddy_run.
  *
  * @module test/workspace-concurrency-adversarial.test
  */
@@ -29,7 +29,6 @@ import {
   DEFAULT_CONCURRENCY_CAP,
 } from '../src/host/config/runtime.js';
 import { makeRunTool } from '../src/host/tools/run.js';
-import { createTaskExecutor } from '../src/host/subagent/execute.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Suite 1: Path Normalization & Collision Adversarial Stress Testing
@@ -480,89 +479,5 @@ test('Adversarial 3.5: workbuddy_run jobs.start 同步异常时锁释放保证 (
     busyAfterJobsThrow,
     false,
     'CRITICAL: jobs.start 同步抛出异常时工作区锁被泄露（永久死锁）！',
-  );
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Suite 4: Subagent Executor (executeTask) Lock Lifecycle & Error Guarantees
-// ═══════════════════════════════════════════════════════════════════════════════
-
-test('Adversarial 4.1: executeTask 校验失败 (prompt 为空) 绝不提前锁定工作区', async () => {
-  clearWorkspaceLocks();
-  const runtime = createRuntimeBase();
-
-  const executor = createTaskExecutor({
-    automation: () => ({ cancel: () => {}, done: Promise.resolve({}), readOutput: () => '' }),
-    acquireWorkspaceLock: (cwd, jobId) => runtime.acquireWorkspaceLock(cwd, jobId),
-    releaseWorkspaceLock: (cwd, jobId) => runtime.releaseWorkspaceLock(cwd, jobId),
-  });
-
-  const res = await executor({
-    prompt: '   ',
-    cwd: 'D:/subagent/empty-prompt',
-  });
-
-  assert.equal(res.ok, false);
-  assert.equal(res.reason, REASON_CODES.TASK_ERROR);
-  assert.equal(runtime.isWorkspaceBusy('D:/subagent/empty-prompt'), false);
-});
-
-test('Adversarial 4.2: executeTask 在底层 automation 同步抛错时由 finally 保证释放锁', async () => {
-  clearWorkspaceLocks();
-  const runtime = createRuntimeBase();
-
-  const executor = createTaskExecutor({
-    automation: () => {
-      throw new Error('subagent ignition exploded synchronously');
-    },
-    acquireWorkspaceLock: (cwd, jobId) => runtime.acquireWorkspaceLock(cwd, jobId),
-    releaseWorkspaceLock: (cwd, jobId) => runtime.releaseWorkspaceLock(cwd, jobId),
-  });
-
-  const res = await executor({
-    prompt: 'will throw synchronously',
-    cwd: 'D:/subagent/sync-throw',
-  });
-
-  assert.equal(res.ok, false);
-  assert.equal(res.reason, REASON_CODES.TASK_ERROR);
-  assert.match(res.error?.message, /exploded synchronously/);
-
-  // 必须被 finally 块完全释放
-  assert.equal(
-    runtime.isWorkspaceBusy('D:/subagent/sync-throw'),
-    false,
-    'executeTask 异常退出后工作区锁必须已释放',
-  );
-});
-
-test('Adversarial 4.3: executeTask 在底层 handle.done 异步 reject 时由 finally 保证释放锁', async () => {
-  clearWorkspaceLocks();
-  const runtime = createRuntimeBase();
-
-  const executor = createTaskExecutor({
-    automation: () => ({
-      cancel: () => {},
-      done: Promise.reject(new Error('subagent async done rejected')),
-      readOutput: () => '',
-    }),
-    acquireWorkspaceLock: (cwd, jobId) => runtime.acquireWorkspaceLock(cwd, jobId),
-    releaseWorkspaceLock: (cwd, jobId) => runtime.releaseWorkspaceLock(cwd, jobId),
-  });
-
-  const res = await executor({
-    prompt: 'will reject asynchronously',
-    cwd: 'D:/subagent/async-reject',
-  });
-
-  assert.equal(res.ok, false);
-  assert.equal(res.reason, REASON_CODES.TASK_ERROR);
-  assert.match(res.error?.message, /rejected/);
-
-  // 必须被 finally 块完全释放
-  assert.equal(
-    runtime.isWorkspaceBusy('D:/subagent/async-reject'),
-    false,
-    'executeTask 异步失败后工作区锁必须已释放',
   );
 });

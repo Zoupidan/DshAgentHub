@@ -451,51 +451,7 @@ function boot(overrides = {}) {
     },
   };
 
-  /**
-   * `subagents` 服务的最小可信假件。
-   *
-   * ★ 为什么要造它（2026-09-30）★
-   * 子智能体面是 2026-09-30 新增的第 ⑦ 面。此前假件的 `services` 里没有这一项，
-   * 于是 `ctx.inject(['subagents'], …)` 永远"依赖未就绪"，那条 fiber 从不回调 ——
-   * 表现为 `pendingInjects.length !== 0`，而**注册面什么也测不到**（假绿）。
-   *
-   * ★ `registerProvider` 必须**抛**而不是静默覆盖 ★
-   * 静默覆盖会让"provider 换了"这件事在测试里看不见；而 `dsh-tool-subagent`
-   * 真机上确实按引用复核同一个 provider（`lib/index.js:505`），重复注册在真机上是硬错误。
-   */
-  const subagents = {
-    providers: new Map(),
-    registerProvider(provider) {
-      const name = typeof provider === 'string' ? provider : provider?.name;
-      if (this.providers.has(name)) throw new Error(`DUPLICATE_PROVIDER: ${name}`);
-      this.providers.set(name, provider);
-      return () => { this.providers.delete(name); };
-    },
-    getProvider(name) { return this.providers.get(name); },
-  };
-
-  /**
-   * `llm` 服务的最小可信假件 —— 适配器注册面。
-   *
-   * ★ 语义对齐真机（`dsh-llm/lib/index.js:1863`）★
-   * 重复 provider 抛 `DUPLICATE_ADAPTER`，返回的句柄可撤销注册。
-   */
-  const llm = {
-    adapters: new Map(),
-    registerAdapter(names, adapter) {
-      if (names.length === 0) throw new Error('INVALID_ADAPTER');
-      for (const n of names) {
-        const info = adapter.providerInfo(n);
-        if (info.id !== n) throw new Error(`INVALID_ADAPTER: ${info.id} != ${n}`);
-        if (this.adapters.has(n)) throw new Error(`DUPLICATE_ADAPTER: ${n}`);
-        this.adapters.set(n, adapter);
-      }
-      return () => { for (const n of names) this.adapters.delete(n); };
-    },
-    getAdapter(name) { return this.adapters.get(name); },
-  };
-
-  const services = { tools, jobs, subprocess, settings: settingsService, webServer, systemPrompt, subagents, llm };
+  const services = { tools, jobs, subprocess, settings: settingsService, webServer, systemPrompt };
 
   const ctx = {
     /**
@@ -555,7 +511,7 @@ function boot(overrides = {}) {
       cb(sctx);
       return fiber;
     },
-    tools, jobs, subprocess, subagents, llm,
+    tools, jobs, subprocess,
   };
 
   // ★ 必须在 `apply.apply()` **之前**把家目录指走：`detectWorkBuddy()` 在函数体的**同步段**
@@ -570,7 +526,7 @@ function boot(overrides = {}) {
   mods.apply.apply(ctx, entry);
 
   return {
-    state, ctx, tools, jobs, subprocess, entry, settingsService, subagents, llm,
+    state, ctx, tools, jobs, subprocess, entry, settingsService,
     /**
      * 模拟"用户在卡片上拨开关"：走**同一条** settings.update 路径（用户层合并 + 校验 + onChange），
      *  否则用户层（settingsSection）与解析值会分叉 —— 后续任何一次真实写入都会把旧 enabled 合并回来。
@@ -622,50 +578,12 @@ async function withEnv(overrides, fn) {
 
 test('模块契约：name / inject 依赖声明与真机加载前提一致', { skip: SKIP }, () => {
   assert.equal(mods.apply.name, 'plugin-workbuddy'); // = cordis.patch.yml 行 id
-  // ★ `subagents` 是第 ⑦ 面（子智能体 provider）的加载前提；缺它 ⇒ 真宿主里插件等不到这个
-  //   服务，`apply()` 不装配。`llm` **已于 2026-10-02 摘掉**：本插件不注册 LLM 适配器
-  //   （把 WorkBuddy 当父 Agent 的 provider = 反代，明令禁止），`ctx.llm` 全仓零引用，
-  //   留着它只是声明一个不存在的加载前提。这条断言是那个决定的机器可查形态。
-  assert.deepEqual(mods.apply.inject, ['tools', 'subprocess', 'jobs', 'subagents']);
+  // ★ 2026-10-17（0.5.1）收编：`subagents` 已从依赖里摘掉 —— 旧 ⑦ 子智能体面整体删除
+  //   （一次性委派由名为 workbuddy 的团队成员 + workbuddy_run 承接，见 apply.js 头注）。
+  //   `llm` **已于 2026-10-02 摘掉**：本插件不注册 LLM 适配器（把 WorkBuddy 当父 Agent
+  //   的 provider = 反代，明令禁止），`ctx.llm` 全仓零引用。这条断言是那些决定的机器可查形态。
+  assert.deepEqual(mods.apply.inject, ['tools', 'subprocess', 'jobs']);
   assert.equal(typeof mods.apply.Config?.['~standard']?.validate, 'function');
-});
-
-test('第 ⑦ 面：ON ⇒ `workbuddy` 子智能体 provider 注册，且**一个 LLM 适配器都不许**注册', { skip: SKIP }, async () => {
-  const host = boot({ enabled: true });
-  await waitFor(() => host.state.registration.size === 4);
-
-  // ★ 这条断言此前**根本不存在**，而 `ctx.inject(['subagents'], …)` 因为假件没有该服务
-  //   从不回调 —— 也就是说"子智能体有没有真的注册进去"此前是**零覆盖**（假绿）。
-  const provider = host.subagents.getProvider('workbuddy');
-  assert.ok(provider, 'workbuddy 子智能体 provider 应当注册进 subagents 服务');
-  assert.equal(typeof provider.start, 'function', 'provider 必须实现 seam 的 start');
-  assert.equal(typeof provider.capabilities, 'object', '能力面缺席 ⇒ seam 的 assertCapabilities 无从核对');
-
-  // ★★ 反代红线（2026-10-02）★★
-  //   WorkBuddy 是**智能体**，不是 LLM。把它注册成 dsh 的 provider，就等于让父 Agent
-  //   拿 WorkBuddy 当模型跑自己的 agent loop —— 那是反向代理，用户明令禁止。
-  //   正确链路是：dsh 下发任务 → WorkBuddy 自己跑完 → 结果回传到父会话（`one-shot`）。
-  //   ⇒ 这条断言就是那条红线的机器可查形态：谁把适配器加回来，这里立刻红。
-  assert.equal(host.llm.getAdapter('workbuddy'), undefined,
-    'WorkBuddy 不许注册成 LLM 适配器（禁止反代：父 Agent 的 provider 不得是 workbuddy）');
-  assert.equal(host.llm.adapters.size, 0, 'llm 服务里不许出现任何来自本插件的适配器');
-});
-
-test('第 ⑦ 面：OFF ⇒ provider 与适配器**一处都不许**注册（U4）', { skip: SKIP }, async () => {
-  const host = boot({ enabled: false });
-  await waitFor(() => host.state.registration.size === 4);
-  assert.equal(host.subagents.providers.size, 0, 'enabled=false 时注册 provider = 比工具注册更宽的口子被撬开');
-  assert.equal(host.llm.adapters.size, 0, 'enabled=false 时注册适配器 = LLM 路由里多一个无人可委派的面');
-});
-
-test('第 ⑦ 面：OFF ⇒ ON 的重收敛能补注册 provider，且适配器**永远**不补（上一条不是"永远不可注册"）', { skip: SKIP }, async () => {
-  const host = boot({ enabled: false });
-  await waitFor(() => host.state.registration.size === 4);
-  assert.equal(host.subagents.getProvider('workbuddy'), undefined, 'OFF 时就不该有 provider');
-  host.setEnabled(true);
-  const ok = await waitFor(() => host.subagents.getProvider('workbuddy') !== undefined);
-  assert.ok(ok, 'OFF → ON 走的是同一条 reconcile，provider 应当补注册');
-  assert.equal(host.llm.adapters.size, 0, '重收敛补的也只有 provider —— 适配器在任何路径上都不补');
 });
 
 test('判据① + ⑤：ON（已装）⇒ 注册四工具；每定义含 output.schema + 可调用 output.render', { skip: SKIP }, async () => {
@@ -1234,7 +1152,7 @@ test('卸载收敛：工具 / 路由 / prompt section / settings fiber 随 effec
   assert.equal(host.state.registration.size, 0, '工具应全部注销');
   assert.equal(host.state.routes.size, 0, '路由应全部注销');
   assert.equal(host.state.sections.size, 0, 'prompt section 应全部注销');
-  assert.equal(host.state.fiberDisposals, 4, '四个 fiber（tools 的 settings + injects 的两个 + 子智能体面）都应被 dispose');
+  assert.equal(host.state.fiberDisposals, 3, '三个 fiber（tools 的 settings + injects 的两个）都应被 dispose');
 });
 
 test('bridge：非 GET ⇒ 405 + Allow: GET', { skip: SKIP }, async () => {

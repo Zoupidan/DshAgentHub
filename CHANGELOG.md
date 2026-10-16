@@ -2,6 +2,17 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.5.1] - 2026-10-17
+
+### 收编（Consolidated）
+
+- **旧子代理通道整体并入成员身份**：删除 `dsh-tool-subagent` 行 + `workbuddy` 子智能体 provider 及其实现与测试——`workbuddy_subagent` 不再出现在任何会话（主会话与成员都不再看见它）。一次性进程外委派由「名为 `workbuddy` 的团队成员 + `workbuddy_run`」承接：同一执行链、同一会话亲和，且成员会话可点开（可见性优于旧通道）。反代红线不变（不注册任何 LLM 适配器）。
+- **清除重复的团队持久化行**：删除 `dsh-session-persistence-jsonl-team`（与 dsh-base 基础行重复注册同名服务，启动每次报 "1 entry did not activate"；团队实际一直由基础服务供能——成员 / 消息 / 任务板真机全程可用）。启动警告随之消失。
+
+### 维护（Chore）
+
+- 测试面同步收口（5 个纯 subagent 文件删除、4 个混合文件裁剪、夹具与文案更新）；版本线 root / plugin-workbuddy `0.5.1`。
+
 ## [0.5.0] - 2026-10-17
 
 ### 本次更新的目的

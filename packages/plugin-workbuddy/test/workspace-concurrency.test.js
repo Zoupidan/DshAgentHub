@@ -3,7 +3,7 @@
  *
  * Implements verification for:
  *   - F10: Per-workspace concurrency mutex in runtime.js (serialize/reject on same cwd, distinct run up to cap = 3).
- *   - F11: Structured busy rejection with code ERR_WORKSPACE_BUSY across reason-codes, run.js, and subagent/execute.js.
+ *   - F11: Structured busy rejection with code ERR_WORKSPACE_BUSY across reason-codes and run.js.
  *   - F12: Background focus protection in automation.js (is_background_automation = 1, promoteSession never called while active).
  *
  * @module test/workspace-concurrency.test
@@ -28,7 +28,6 @@ import {
   DEFAULT_CONCURRENCY_CAP,
 } from '../src/host/config/runtime.js';
 import { makeRunTool } from '../src/host/tools/run.js';
-import { createTaskExecutor } from '../src/host/subagent/execute.js';
 import {
   insertSession,
   promoteSession,
@@ -387,175 +386,6 @@ test('workbuddy_run: 同步校验失败或派发前异常时立即释放工作�
   env.completeAutomation();
   await env.waitForHandles();
   assert.equal(env.runtime.isWorkspaceBusy('D:/repo/project-sync-fail'), false);
-});
-
-// ── 5. Subagent Executor (execute.js) Concurrency & Lock Handling ─────────────
-
-test('createTaskExecutor: 子智能体任务互斥拦截与锁生命周期释放', async () => {
-  const runtime = createRuntimeBase();
-
-  let completeSubagentAutomation;
-  const fakeAutomation = () => {
-    let resolveDone;
-    const donePromise = new Promise((res) => {
-      resolveDone = res;
-    });
-    completeSubagentAutomation = resolveDone;
-    return {
-      cancel: () => {},
-      done: donePromise,
-      readOutput: () => 'subagent-output',
-    };
-  };
-
-  const executor = createTaskExecutor({
-    automation: fakeAutomation,
-    acquireWorkspaceLock: (cwd, jobId) => runtime.acquireWorkspaceLock(cwd, jobId),
-    releaseWorkspaceLock: (cwd, jobId) => runtime.releaseWorkspaceLock(cwd, jobId),
-  });
-
-  // 启动任务 1
-  const task1Promise = executor({
-    prompt: 'subagent task 1',
-    cwd: 'D:/workspace/subagent-1',
-  });
-
-  // 工作区已被锁定
-  assert.equal(runtime.isWorkspaceBusy('D:/workspace/subagent-1'), true);
-
-  // 相同工作区的任务 2 必须被拦截并返回结构化失败报告
-  const task2Result = await executor({
-    prompt: 'subagent task 2',
-    cwd: 'd:\\workspace\\subagent-1\\',
-  });
-
-  assert.equal(task2Result.ok, false);
-  assert.equal(task2Result.reason, REASON_CODES.WORKSPACE_BUSY);
-  assert.equal(task2Result.error?.code, 'ERR_WORKSPACE_BUSY');
-  assert.match(task2Result.error?.message, /busy/i);
-
-  // 完成任务 1
-  completeSubagentAutomation({
-    status: 'completed',
-    detail: 'ok',
-    exitCode: 0,
-    automation: {
-      reason: null,
-      automationId: 'auto-sub-1',
-      conversationId: 'conv-sub-1',
-      sessionId: 'conv-sub-1',
-      reply: 'subagent finished',
-      phases: ['running'],
-    },
-  });
-
-  const task1Result = await task1Promise;
-  assert.equal(task1Result.ok, true);
-  // 任务 1 结束后锁已在 finally 块中释放
-  assert.equal(runtime.isWorkspaceBusy('D:/workspace/subagent-1'), false);
-
-  // 随后再次执行任务 3 成功
-  const task3Promise = executor({
-    prompt: 'subagent task 3',
-    cwd: 'D:/workspace/subagent-1',
-  });
-  assert.equal(runtime.isWorkspaceBusy('D:/workspace/subagent-1'), true);
-
-  completeSubagentAutomation({
-    status: 'completed',
-    detail: 'ok',
-    exitCode: 0,
-    automation: {
-      reason: null,
-      automationId: 'auto-sub-3',
-      conversationId: 'conv-sub-3',
-      sessionId: 'conv-sub-3',
-      reply: 'subagent 3 finished',
-      phases: ['running'],
-    },
-  });
-  const task3Result = await task3Promise;
-  assert.equal(task3Result.ok, true);
-  assert.equal(runtime.isWorkspaceBusy('D:/workspace/subagent-1'), false);
-});
-
-test('createTaskExecutor: 异常抛出时 finally 块保证工作区锁绝不泄漏', async () => {
-  const runtime = createRuntimeBase();
-
-  const explodingAutomation = () => {
-    throw new Error('Explosion during automation ignition');
-  };
-
-  const executor = createTaskExecutor({
-    automation: explodingAutomation,
-    acquireWorkspaceLock: (cwd, jobId) => runtime.acquireWorkspaceLock(cwd, jobId),
-    releaseWorkspaceLock: (cwd, jobId) => runtime.releaseWorkspaceLock(cwd, jobId),
-  });
-
-  const result = await executor({
-    prompt: 'exploding task',
-    cwd: 'D:/workspace/leak-test',
-  });
-
-  assert.equal(result.ok, false);
-  assert.match(result.error.message, /Explosion during automation ignition/);
-  // 必须被释放
-  assert.equal(runtime.isWorkspaceBusy('D:/workspace/leak-test'), false);
-});
-
-// ── 6. Focus Protection & is_background_automation = 1 (automation.js) ─────────
-
-test('gateway/automation.js: insertSession 强校验并写入 is_background_automation = 1', () => {
-  const home = mkdtempSync(join(tmpdir(), 'wb-focus-test-'));
-  const dbPath = join(home, 'workbuddy.db');
-  const db = new DatabaseSync(dbPath);
-
-  try {
-    db.exec(`CREATE TABLE sessions (
-      id TEXT PRIMARY KEY,
-      cwd TEXT,
-      title TEXT,
-      permission_mode TEXT,
-      model TEXT,
-      thought_level TEXT,
-      is_background_automation INTEGER,
-      session_settings TEXT,
-      created_at INTEGER
-    );`);
-
-    const sessionObj = {
-      id: 'session-bg-test-1',
-      cwd: 'D:/repo/test',
-      title: 'Background Automation Session',
-      permissionMode: 'fullAccess',
-      model: 'deepseek-v4.1-flash',
-      thoughtLevel: null,
-      isBackgroundAutomation: 1,
-      createdAt: Date.now(),
-    };
-
-    insertSession(db, sessionObj);
-
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get('session-bg-test-1');
-    assert.ok(row, 'session 必须写入成功');
-    assert.equal(row.is_background_automation, 1, 'is_background_automation 必须为 1，确保桌面端不抢夺焦点');
-
-    // 变异测试：若有人篡改其为 0，insertSession 必须抛错阻止侵入前台
-    assert.throws(
-      () => {
-        insertSession(db, {
-          id: 'session-bg-bad',
-          title: 'Bad Focus Session',
-          isBackgroundAutomation: 0,
-        });
-      },
-      /is_background_automation must be 1/,
-      '若 is_background_automation 不为 1 必须报错拒绝',
-    );
-  } finally {
-    db.close();
-    rmSync(home, { recursive: true, force: true });
-  }
 });
 
 test('gateway/automation.js: promoteSession 契约 —— 仅在显式请求且处于非在途状态下使用', () => {

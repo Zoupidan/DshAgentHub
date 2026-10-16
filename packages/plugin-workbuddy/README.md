@@ -35,6 +35,7 @@ WorkBuddy、读它的状态、收割结果、精准清理。插件**只经桌面
 本插件选择**智能团队**而非经典子智能体作为委派面（2026-10-02 主理人裁决）；2026-10-17
 （v0.5.0）「身份上移」起这是**唯一**形态——工具面只注册进名为 `workbuddy` 的成员自己的作用域。
 团队成员是**真的 dsh agent**，不是代理壳——名字直接显示在团队界面上。
+0.5.1 起，旧的 `dsh-tool-subagent` 通道（`workbuddy_subagent`）也已整体删除——委派只有这一条形态。
 
 标准用法（模型按系统提示执行，人也可以直接要求）：
 
@@ -61,9 +62,9 @@ WorkBuddy 路由，就是本项目禁止的反代。插件只做"成员是 dsh a
 
 ## 维护者注记
 
-- **team 栈依赖**：`cordis.patch.yml` 的 `dsh-session-persistence-jsonl-team` 必须带
-  `config.root`（schema `root` required，缺了整个「智能团队」界面不激活，见
-  `04-docs/FIX-20261010-team-persistence-root.md`）。
+- **team 栈持久化**：由 dsh-base 的 `dsh-session-persistence-jsonl` 提供；0.5.1 起删除了重复的
+  `-team` 行（与基础行重复注册同名服务，启动报 "1 entry did not activate"；团队实际一直由
+  基础服务供能——真机全程验证）。历史修复记录见 `04-docs/FIX-20261010-team-persistence-root.md`。
 - **安装方式**：profile 的 `node_modules/dsh-plugin-workbuddy` 是指向本目录的 Junction，
   改这里即对所有 profile 生效；运行中的 DSH 需重启才重读 patch。
 - **测试**：`npm run test:host` / `test:client`；红线 `npm run ci:redlines`。

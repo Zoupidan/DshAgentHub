@@ -203,7 +203,7 @@ export function createDispatcher(deps = {}) {
   //   但重启后要重新 new 一次。**不静默假装记住了**——下面的返回面会照实区分这两种。
   /**
    * 记性的落点 key。缺省 = `OWN_SESSION_KEY`（全局那一条，行为与引入本参数前逐字相同）。
-   * ★ 子智能体那条线（`src/host/subagent/`）用**每个 dsh 子会话一个 key**，
+   * ★ 子智能体那条线（`src/host/subagent/`，2026-10-17 已随收编删除）当年用**每个 dsh 子会话一个 key**，
    *   否则两个子会话共用同一把记性 ⇒ A 的上下文漏进 B。传 '' 一律当缺省，不开"匿名记性"后门。
    */
   const ownKeyOf = (key) => (typeof key === 'string' && key !== '' ? key : OWN_SESSION_KEY);

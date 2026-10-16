@@ -36,7 +36,7 @@ import z from '@deepseek-ai/schemastery';
 
 export const Config = z.object({
   // ★★ 授权总闸（铁律 U4）：`enabled !== true` ⇒ 工具面与委派面**一处都不注册**。
-  //   委派面读它的地方是 `host/subagent/index.js` 的 `reconcile`。
+  //   工具注册面读它的地方是 `host/tools/index.js` 的 `reconcile`（2026-10-17 起委派面并入成员身份）。
   //   默认 `false` 是**对外契约**：`cordis.patch.yml` 的字面量必须与本默认值一致（test:host 断言），
   //   改默认值会同时动到 schema 默认值断言与补丁一致性断言，三处要一起改。
   enabled: z.boolean().default(false).volatile(),
@@ -93,7 +93,7 @@ export const Config = z.object({
   //   `create(+model/+title)` → `configSetThoughtLevel`/`configSetPermissionMode`（仅当本轮
   //   请求了对应值）→ `runPrompt` 同步等终态一次走完，**省掉计划任务的调度开销**
   //   （`INSERT + tick(5s) + 拾取(10~30s) + 完成察觉(0~5s)` ≈ 15s；建会话本身真机 123ms）。
-  //   覆盖 `tools/run.js` 与 `subagent/execute.js` 两条点火（用户拍板 D2）。
+  //   覆盖 `tools/run.js` 的点火（用户拍板 D2）。
   // ★ 回退语义（R-NEW-2）：只有**派发前**失败才回退计划任务（`fallback`/`fallbackReason` 两键
   //   如实）；**已派发**的失败一律不回退 —— 回退会把同一条 prompt 再跑一遍（双份积分 + 两条
   //   对话）。关着时行为与现有计划任务路径逐字节一致（零回归门禁）。

@@ -23,18 +23,16 @@ import { detectWorkBuddy } from './probe/detect.js';
 import { availabilityText } from './prompts/availability.js';
 import { makeRoutes } from './routes/index.js';
 import { loadSessionMap, sweepOwnSessions } from './session/map.js';
-import { reconcileSubagentProvider } from './subagent/index.js';
 import { reconcileTools } from './tools/index.js';
 
 const name = PLUGIN_ID;
-// ★ ⑦ 子智能体面：`subagents` 进 inject 数组，只是让 cordis **知道**要等这个服务；
-//   真正注册走 apply() 末尾那条 `ctx.inject(['subagents'], …)` 延迟 fiber —— 与 ⑤⑥ 同款。
-//   服务不在（裁剪过的 dsh）时那条 fiber 永不回调，本插件照常装配其余各面。
-// ★ 2026-10-02：`llm` 已从依赖里摘掉 ★
-//   本插件**不再注册任何 LLM 适配器**（把 WorkBuddy 当父 Agent 的 provider = 反代，明令禁止），
-//   全仓 `ctx.llm` 零引用。把 `llm` 留在 inject 里 = 声明一个自己不再需要的加载前提：
-//   裁剪过的 dsh 上只会白等一个服务。少一个前提 ⇒ 少一种"不装配"的姿势。
-const inject = ['tools', 'subprocess', 'jobs', 'subagents']; // ⑤⑥ 的 webServer/settings/systemPrompt 走 deferred inject
+// ★ 2026-10-17（0.5.1）收编：旧 ⑦ 子智能体面（provider `workbuddy` + `dsh-tool-subagent` 行）
+//   已整体删除 —— 一次性进程外委派由「名为 workbuddy 的团队成员 + workbuddy_run」承接
+//   （同一执行链、同一会话亲和；成员会话可点开，可见性反而更好）。`subagents` 随之从依赖摘掉。
+// ★ 2026-10-02：`llm` 已从依赖里摘掉（反代红线——本插件不注册任何 LLM 适配器，
+//   把 WorkBuddy 当父 Agent 的 provider 被明令禁止；全仓 `ctx.llm` 零引用）。
+//   少一个前提 ⇒ 少一种"不装配"的姿势。
+const inject = ['tools', 'subprocess', 'jobs']; // ⑤⑥ 的 webServer/settings/systemPrompt 走 deferred inject
 
 /**
  * 把官方进程出口包成 `launchDesktop` 要的**火枪式**启动器（★ 2026-09-30）。
@@ -181,14 +179,7 @@ function apply(ctx, config) {
   //     `get` / `resolveExecution` 是全进程共享的工具解析入口，改写后一切非全局注册的工具
   //     （预设挂载的 pwsh / read / write / …）在派发层一律 `unknown tool`——真机全工具面
   //     丢失事故的根因（见 CHANGELOG [0.4.1]）。回归闸见 test/late-harvest.test.js ⑧。
-  // ④' ★ 子智能体面：把 WorkBuddy 注册成**真的** provider（`workbuddy`），而不只是一次工具调用。
-  //     收敛判据、失败面与 `reconcileTools` 同款（见 host/subagent/index.js 头注）：
-  //     `enabled !== true` ⇒ 不注册；注册失败只落日志，不炸掉本行之后的 ⑤⑥ 装配。
-  ctx.effect(() => reconcileSubagentProvider(ctx, {
-    // ★ `sessions` 传进去 = 子智能体面与工具面共用同一份会话记性 ⇒ 一个任务 = 一个对话。
-    runtime, NS, dispatch, sessions,
-    log: (message) => ctx.logger?.warn?.(`[${PLUGIN_ID}] ${message}`),
-  }), `${PLUGIN_ID}: subagent provider`);
+  // ④' （2026-10-17，0.5.1）旧子智能体面已整体删除 —— 收编进成员身份（见文件头与 CHANGELOG [0.5.1]）。
   // ⑤ 状态 bridge + ⑥ 可用性注入（单个 effect 收纳两个 fiber：卸载时一并 dispose，不裸注册）
   ctx.effect(() => {
     const fibers = [

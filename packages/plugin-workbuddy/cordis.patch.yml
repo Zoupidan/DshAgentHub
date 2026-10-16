@@ -172,47 +172,18 @@
             xhigh: 'xhigh'
             max: 'max'
 
-# ── 第二行：把「委派」这件事接上一个真正的子智能体 provider ──────────────────────
-# ★ 为什么是**第二行**而不是并进上面那行 ★
-# 上面那行是**本插件自己的**配置（`dsh-plugin-workbuddy`），下面这行是**另一个插件**
-# （`dsh-tool-subagent`）的配置。两者的 `config:` 由不同的 `Config` schema 声明，
-# 键集合互不相干；并进一行会让其中一个 schema 静默吃掉对方的键。
-#
-# ★ 这几行是「`workbuddy_subagent` 这个委派工具出现在父会话里」在宿主侧的全部配置 ★
-#   ⚠ 2026-10-02 更正：它**不会**让 WorkBuddy 进 dsh 的子智能体列表 —— provider 返回
-#     `localAgent: void 0`，`dsh-subagent/lib/index.js:3130` 因此不建 catalog 行，
-#     dsh 侧没有可点开的子会话。看得见的是**父会话里那一次调用 + 它回传的结果**。
-#   - `provider: workbuddy`      —— 选中 host/subagent/provider.js 注册的那个 provider。
-#     ★ 它同时是**挂载闸**：`dsh-tool-subagent` 只在 `subagent/provider-added` 事件里、
-#       且配置实例的 `config.provider` 与该名字相等时才把工具挂上
-#       （dsh-tool-subagent/lib/index.js:565-575）。名字写错 = 工具永远不出现。
-#   - `toolName: workbuddy_subagent` —— 委派工具的名字。不改的话它叫 `subagent`，
-#     与别的委派工具重名，模型在工具列表里分不清该派给谁。
-#   - `backgroundMode: one-shot` —— ★ 2026-10-02 从 `continuable` 改回 `one-shot` ★
-#     `continuable` 要 provider 兑现 `prepareContinuable`（dsh-subagent/lib/index.js:3149-3152），
-#     而那是**在 dsh 自己的进程里**物化一个真子 Agent（`startContinuable()` →
-#     `host.prepareContinuable` → `activations.materialize(...)`）—— 子 Agent 的每一次生成
-#     都还得走 dsh 的 agent loop，也就还得有一个 `workbuddy` 路由的 LLM。
-#     那条路已被判定为**反代**并删除（见 provider.js 文件头），所以这里必须回到 one-shot：
-#     本 provider 全部能力位为 `false`，`prepareContinuable` 不存在，
-#     声明 `continuable` 会在 `start()` 里直接撞 `UNSUPPORTED_CAPABILITY`。
-#     代价如实记：**one-shot 没有"同一子会话继续下任务"**，dsh 侧也不再有可点开的子会话。
-#     「一个任务 = 一个 WorkBuddy 对话」改由 `sessionKey` 亲和性实现（同一父会话 + 同一任务名
-#     ⇒ 同一条 WorkBuddy 对话），不再依赖 continuable。
-#   - `agentOptions` 刻意**整块不写** —— 它只在 dsh 自己起子 Agent 时才会被读；
-#     本 provider 不走那条路（`inheritsParentContext: false`，`localAgent: void 0`），
-#     写了就是"接受但忽略"，正是 dsh 说的最坏形态。少了它，这一行也不会失效。
-#   - `maxDepth: provider-managed` —— 显式声明"深度由 provider 自己管"。depthLimit 不在
-#     WorkBuddy 的能力位里（工具运行在**它自己的进程**），让 dsh 用默认上限去要求一个
-#     provider-managed 的后端兑现，等于逼它撒谎。
-#
-# ★★★ `name` 必须带 scope，写成裸名这一行会**静默失效** ★★★
-# 2026-09-30 实机：`dsh --profile cp-wb-hl "<任意任务>"` 打印
-#   dsh: warning: 1 entry did not activate
-#   dsh-tool-subagent (dsh-tool-subagent): failed to import
-# 而 `dsh --profile cp-wb-hl --dump-config` 里这一行的 config **看起来完全正确**
-# —— 三个键一个不缺。★ `--dump-config` 不解析 import，只有真正 boot 才会暴露 ★
-# dsh-base / dsh-web-app 里所有同族条目一律写作 '@deepseek-ai/dsh-tool-subagent'。
+# ── 收编记录（2026-10-17，0.5.1）：旧「子智能体 provider」通道已整体删除 ─────────────
+# 曾经在这里的是「第二行：把委派接上 workbuddy 子智能体 provider」的配置块
+# （`dsh-tool-subagent` 行，toolName `workbuddy_subagent`；见 git 历史与 CHANGELOG）。
+# 收编进「成员身份」后整体删除，理由与去向：
+#   - 该工具由官方包按 provider 名字**全局挂载**，没有任何 scope / 成员参数——无法做到
+#     「只归 workbuddy 成员所有」；留着它 = 主会话面上多一个绕过身份模型的全局动词。
+#   - 它的能力（一次性进程外委派）已由「名为 workbuddy 的团队成员 + workbuddy_run」承接：
+#     同一执行链、同一会话亲和（sessionKey），且成员会话可点开（可见性优于旧通道）。
+#   - ★ 反代红线不变（本项目最高红线）：绝不注册 LLM 适配器、绝不让 dsh 的子 Agent 跑在
+#     WorkBuddy 路由上（历史 llm-adapter.js 与本次删除的子代理通道同属红线外实现）。
+# 代码侧删除面：`src/host/subagent/**`、apply.js 的 ⑦ 面接线、`subagents` 依赖声明；
+# 测试侧：subagent-*.test.js / catalog-gate.test.js 删除，相关夹具与文案同步收口。
 - insert:
     # ── 智能团队（Agent Teams）：持久化 + 团队域 + 工具 + UI（2026-10-02）──────────
     # ★ 主理人裁决：子智能体与智能团队**二选一，选智能团队**。所以这里挂 Team。
@@ -229,22 +200,13 @@
     #     名字在界面上直接可见，工作真的落在 WorkBuddy 里。
     #
     #   依赖组合取自 Team README 的最小可用配置。
-    # ★ 2026-10-10 修复（智能团队界面整体消失的根因）：本条目漏写 `config.root`。
-    #   `dsh-session-persistence-jsonl` 的 schema 是 `root: z.string().required()`
-    #   （asar 内 lib/index.js 的 static Config）⇒ 缺 root 的条目在 boot 时激活失败：
-    #     dsh: warning: 2 entries did not activate
-    #     dsh-session-persistence-jsonl-team: ValidationError: $.root missing required value
-    #   team 栈（agent-team / tool-agent-team / ui-agent-team）依赖持久化会话存储才激活
-    #   （Team README 原话 "The team features need durable session storage to activate"）
-    #   ⇒ 界面上的「智能团队」整个不见。本缺陷自初始提交（9594ce5）即在场，DSH 升级后
-    #   schema 校验变严格才暴露 —— 表现为"之前有的，后面也没了"。
-    #   root 与 dsh-base 的基础条目同值（`dshHomePath('sessions')`）：团队成员本就是
-    #   Lead 会话树下的子会话（header.origin==='subagent'），同库存储保持血缘可查；
-    #   服务键不随实例变（SessionPersistence）⇒ 同 root 的第二实例无冲突。
-    - id: dsh-session-persistence-jsonl-team
-      name: '@deepseek-ai/dsh-session-persistence-jsonl'
-      config:
-        root: !!js dshHomePath('sessions')
+    # ★ 2026-10-17（0.5.1）收编：`dsh-session-persistence-jsonl-team` 重复行已删除 ★
+    #   背景：2026-10-10 曾给该行补 `config.root` 修「界面不激活」；但该行与 dsh-base 的
+    #   `dsh-session-persistence-jsonl` **重复注册同名服务**——cordis 直接拒绝第二次注册，
+    #   boot 每次报 `dsh: warning: 1 entry did not activate / service "sessionPersistence"
+    #   has been registered`。团队实际一直由 base 那份持久化服务供能（2026-10-17 真机全链路
+    #   验证：成员 spawn / 消息 / 任务板全部可用）。行已删除，警告随之消失。
+    #   若未来 base 不再提供该服务，按新证据重建——不要凭旧注释复活。
     - id: agent-team
       name: '@deepseek-ai/dsh-experimental-agent-team'
     - id: tool-agent-team
@@ -253,12 +215,3 @@
       #   `spawn_teammate(name, description, task)` **没有"后端"参数** —— 成员一律是 dsh 起的 agent。
     - id: ui-agent-team
       name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'
-
-- insert:
-    - id: dsh-tool-subagent
-      name: '@deepseek-ai/dsh-tool-subagent'
-      config:
-        provider: workbuddy
-        toolName: workbuddy_subagent
-        backgroundMode: one-shot
-        maxDepth: provider-managed

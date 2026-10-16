@@ -235,17 +235,9 @@ const CONCURRENCY_BUDGET_HINT = ' Concurrency budget: at most 3 tasks in flight 
  * 并且知道那才是它。
  *
  * ★ 只讲能兑现的 ★
- * 〔2026-10-02 更正〕本段原先写的是"`subagent/provider.js` 的 `start()` 返回**真 Agent**
- * （`ctx.agents.create()` 出来的），所以 `subagent/catalog` 目录写得进去 ⇒ 列表里真的会多一行"。
- * **那是假的。** `provider.js:222` 明写 `localAgent: void 0` ⇒ 目录里**不出现**，
- * `catalog-gate.test.js` / `subagent-provider.test.js` 各有一条断言专门钉住"不得出现"。
- * 照原文写，主控模型会以为委派完能在子智能体列表里点开那一行 —— 而它永远点不开。
- * 真实形状：WorkBuddy **以 `workbuddy` 这个名字被选中**（provider 已注册、可用），
- * 但每次委派在 dsh 侧**不留会话、不留目录行**；会话开在 WorkBuddy 桌面里。
- * 所以这一段承诺"走 workbuddy provider 才是对的路"（真的），
- * **不**承诺"能在 dsh 的列表里点开它"（做不到，见 `provider.js:9-11`）。
- * 这条链路已由真机量过（子会话 `source_mode=work`、`is_background_automation` 被归一成 NULL），
- * 但**列表里那行的渲染**要重启后在界面上人眼确认 —— 本句只承诺机制，不承诺已经看过。
+ * 〔历史更正存根，2026-10-17 收编时归档〕本段曾误写"子智能体 provider 返回真 Agent ⇒ 目录里多一行"——
+ * **那是假的**（provider 写死 `localAgent: void 0`）。相关 provider 与 dsh-tool-subagent 通道已于
+ * 0.5.1 整体删除；现行为见「成员身份」：委派由名为 workbuddy 的团队成员执行，其会话真实可见。
  *
  * ★ 2026-10-01 长度收敛（509 → 377）：六条事实一条没删（独立 agent 产品 / 非 shell 命令 / 由 WorkBuddy
  *   桌面驱动且那里开真会话 / 自带 cwd·模型·权限模式 / 该用 `workbuddy` 子智能体而非 workbuddy_run /

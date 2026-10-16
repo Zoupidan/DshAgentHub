@@ -173,7 +173,7 @@ function boot(overrides = {}) {
     //
     //   ⇒ 本文件里的 run 工具用例测的是**契约**（argv_preview / schema / not_sent），
     //     不是自动化点火；钉 spawn 既符合意图，又切断真库写入。
-    //     自动化路本身由 `test/subagent-execute.test.js` + `scripts/ignition-smoke.mjs` 覆盖。
+    //     自动化路本身由 `scripts/ignition-smoke.mjs`（点火冒烟）覆盖。
     transport: overrides.transport ?? 'spawn',
     cliPath: overrides.cliPath ?? CLI_FILE,
     cwdRoot: overrides.cwdRoot ?? '',

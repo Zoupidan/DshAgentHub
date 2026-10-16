@@ -415,7 +415,6 @@ test('⑧ apply.js 装配：共享注册表零改写（0.4.1 回归闸；注册�
     tools: mockTools,
     subprocess: { spawn: () => {} },
     jobs: { start: () => {} },
-    subagents: {},
     effect: () => () => {},
     inject: () => () => {},
     get: () => null,
