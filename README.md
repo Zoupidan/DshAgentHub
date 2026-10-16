@@ -117,7 +117,7 @@ npm run link:dsh-deps
 
 ## 使用
 
-工具只暴露给主控模型（WorkBuddy：`workbuddy_run` / `workbuddy_status`；OpenCode：`opencode_run` / `opencode_status` / `opencode_approvals` / `opencode_purge`）。调不调用由 LLM 自主决定，人在 DshAgentHub 里只管交代事。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
+两个 harness 都以 **DshAgentHub 的智能体团队成员**形态接入（v0.5.0 起）：挂载了智能团队的组合里，工具面（WorkBuddy：`workbuddy_*`；OpenCode：`opencode_*`）只对**名为 `workbuddy` / `opencode` 的成员**可见——主控模型经 `spawn_teammate` → `send_message` → `wait_agent` 完成委派，成员在团队面板可见、其会话可点开（工作仍真实落在各自桌面端）。未挂团队的组合自动回退为全局工具的旧形态。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
 
 ---
 

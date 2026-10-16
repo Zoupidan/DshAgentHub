@@ -16,11 +16,30 @@ import { REASON_CODES } from '../launch/reason-codes.js';
 /** 失败提示里证据摘录的字符上限（本节每回合都进系统提示 ⇒ 必须截断）。 */
 const FAILURE_EVIDENCE_CHARS = 200;
 
+/** 并发预算句（就绪支与 Lead 支共用；逐字唯一事实：单 harness ≤3 在途、合计 ≤4）。 */
+const CONCURRENCY_LINE = 'Concurrency budget: at most 3 tasks in flight for this harness, and at most 4 across '
+  + 'all harnesses (the dsh brain coordinates the total) — do not exceed it.';
+
+/**
+ * ★ ① 身份上移（2026-10-17）Lead 口径：OpenCode 由名为 "opencode" 的团队成员执行。
+ * 触发条件 = 本 agent 的可见面**没有** opencode_run（团队在场时的 Lead；工具面归成员身份）。
+ */
+const LEAD_MEMBER_ROUTE_TEXT = 'OpenCode is reachable through its team member: spawn_teammate with name '
+  + '"opencode" (lower-kebab-case; description must START with "OpenCode · " — e.g. "OpenCode · your work '
+  + 'runs by calling opencode_run; you do not implement it yourself") creates the real member that operates '
+  + 'the local OpenCode desktop app. Message it the task with send_message (a queued message is already '
+  + 'stored — never resend it) and wait with wait_agent for its receipt before answering the user. The '
+  + 'opencode_* tools are NOT on your own tool surface by design — they belong to that member\'s identity; '
+  + 'do not attempt to call them.';
+
 /**
  * @param {object} runtime config/runtime.js 实例
  * @returns {string} 本节文本（'' = 不加节 —— 不会发生：三态各有一句）
  */
-export function availabilityText(runtime) {
+export function availabilityText(runtime, opts = {}) {
+  // ★ ① 身份上移（2026-10-17）：调用方（apply 的 section thunk）按"该 agent 的可见面"传入；
+  //   缺省 = 老口径（有工具）—— 老调用方与老测试逐字不动。
+  const hasTools = opts?.hasTools !== false;
   const cfg = runtime.currentConfig?.() ?? {};
   const lines = [];
   if (cfg.enabled !== true) {
@@ -32,15 +51,22 @@ export function availabilityText(runtime) {
   }
   const ps = runtime.probeState();
   if (ps.status !== 'done') {
-    lines.push(
-      `OpenCode delegation is enabled and its availability check is still running (${ps.pendingReason || ps.status}) — `
-      + 'opencode_run may refuse until the check lands; opencode_status shows the evidence.',
-    );
+    lines.push(hasTools
+      ? `OpenCode delegation is enabled and its availability check is still running (${ps.pendingReason || ps.status}) — `
+        + 'opencode_run may refuse until the check lands; opencode_status shows the evidence.'
+      : `OpenCode delegation is enabled and its availability check is still running (${ps.pendingReason || ps.status}). `
+        + 'Spawn the team member "opencode" to delegate in the meantime (description must START with "OpenCode · ").');
   } else if (ps.result?.installed !== true) {
-    lines.push(
-      `OpenCode delegation is enabled but the local OpenCode service was NOT found (${ps.result?.reason || 'unknown'}). `
-      + 'opencode_status lists which service.json paths were checked.',
-    );
+    lines.push(hasTools
+      ? `OpenCode delegation is enabled but the local OpenCode service was NOT found (${ps.result?.reason || 'unknown'}). `
+        + 'opencode_status lists which service.json paths were checked.'
+      : `OpenCode delegation is enabled but the local OpenCode service was NOT found (${ps.result?.reason || 'unknown'}). `
+        + 'Do not delegate until it is available.');
+  } else if (!hasTools) {
+    // ★ ① 身份上移（2026-10-17）：本 agent 的可见面上没有 opencode_*（团队在场时 = Lead）——
+    //   指引走团队成员身份（名为 "opencode" 的 teammate）；成员职责由成员 scope 的职责段承担。
+    lines.push(LEAD_MEMBER_ROUTE_TEXT);
+    lines.push(CONCURRENCY_LINE);
   } else {
     lines.push(
       'OpenCode delegation is available: opencode_run sends a task to the local OpenCode desktop app. '
@@ -51,10 +77,7 @@ export function availabilityText(runtime) {
     // ★ 2026-10-15 并发预算（模型可见文本）：dsh 是协调方 —— 单 harness 至多 3 个在途任务，全部 harness
     //   合计至多 4 个。只写在**就绪**这一支：关闭 / 未探测完 / 服务缺失三支里没有可下发的对象，
     //   写预算就是每回合白付的 token（本节纪律：只讲读得出来的话，本节每回合都进系统提示）。
-    lines.push(
-      'Concurrency budget: at most 3 tasks in flight for this harness, and at most 4 across all harnesses '
-      + '(the dsh brain coordinates the total) — do not exceed it.',
-    );
+    lines.push(CONCURRENCY_LINE);
     const model = typeof cfg.model === 'string' ? cfg.model : '';
     const variant = typeof cfg.variant === 'string' ? cfg.variant : '';
     lines.push(
@@ -67,7 +90,7 @@ export function availabilityText(runtime) {
       + 'opencode_approvals; opencode_purge clears memory or hard-deletes a session.',
     );
   }
-  const last = runtime.lastRun();
+  const last = hasTools ? runtime.lastRun() : null;
   if (last !== null && typeof last === 'object' && last.reasonCode !== REASON_CODES.OK && last.reasonCode !== undefined) {
     const evidence = typeof last.reasonEvidence === 'string' ? last.reasonEvidence.slice(0, FAILURE_EVIDENCE_CHARS) : '';
     lines.push(

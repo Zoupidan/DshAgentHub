@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-opencode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "把本机 OpenCode 桌面端暴露成 dsh 的模型面工具：经其自带本机 HTTP+SSE 服务完成「创建对话→目录/模型/档位→下发→复用→回执→审批」全流程（零反代、零 CLI、全部可视化）。",

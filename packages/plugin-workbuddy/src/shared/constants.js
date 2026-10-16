@@ -39,6 +39,14 @@ export const TOOL_STATUS = 'workbuddy_status';
 export const TOOL_PURGE = 'workbuddy_purge';
 
 /**
+ * ★ ① 身份上移（2026-10-17）：本 harness 在 dsh 智能体团队里的**成员名**（lower-kebab，dsh 硬校验；不可复用）。
+ * 团队在场时，工具面（run/status/purge/harvest）只注册进"名为本值"的成员 scope —— Lead 不再直呼
+ * workbuddy_run，而是 spawn_teammate(name: 'workbuddy', description: 'WorkBuddy · …') 后走团队面。
+ * 常量消费点：tools/index.js（成员面安装）、apply.js（可用性 section 分支）、测试。
+ */
+export const MEMBER_NAME = 'workbuddy';
+
+/**
  * 权限读回失败的**显式标注**（施工单 2026-10-10 #2：读回失败不得用含混的 '(unknown)'）。
  * 语义边界：请求过权限档、但会话侧没能读回实际值 —— "没读到"与"读到了但没兑现"
  * 必须可区分；调用方一条权限都没请求时维持既有 '(unknown)' 原状（那时无告示可谈）。

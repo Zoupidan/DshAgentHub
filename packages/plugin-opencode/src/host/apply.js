@@ -11,7 +11,7 @@
  *
  * @module host/apply
  */
-import { PLUGIN_ID, NS } from '../shared/constants.js';
+import { PLUGIN_ID, NS, TOOL_RUN } from '../shared/constants.js';
 import { createRuntime } from './config/runtime.js';
 import { Config } from './config/schema.js';
 import { createDispatcher } from './gateway/dispatch.js';
@@ -57,6 +57,12 @@ function apply(ctx, config) {
     sessions,
     runtime,
   });
+  // ★ ① 身份上移（2026-10-17）：可用性 section 按"这个 agent 自己的可见面"分支 ——
+  //   成员（或团队未挂时的全局）见到工具口径；Lead 见到"走团队成员"口径。
+  const hasHarnessToolsForScope = (scope) => {
+    if (scope === undefined || scope === null) return true; // 无 scope 的取用方按老口径
+    try { return ctx.tools.get(TOOL_RUN, scope) !== undefined; } catch { return true; }
+  };
   // ⑤ ★ U4 心脏：工具注册 + 开关心脏（effect-scoped：随插件卸载自动移除）
   ctx.effect(() => reconcileTools(ctx, {
     runtime, sessions, config, Config, NS, detect: detectOpencode, dispatch,
@@ -76,7 +82,8 @@ function apply(ctx, config) {
           const d = sctx.systemPrompt.section({
             name: `${PLUGIN_ID}:availability`,
             order: 520,
-            text: () => availabilityText(runtime),
+            // ★ ① 身份上移（2026-10-17）：按本 agent 的可见面分支（成员=工具口径 / Lead=团队成员口径）。
+            text: (context) => availabilityText(runtime, { hasTools: hasHarnessToolsForScope(context?.scope) }),
           });
           return () => d();
         }, `${PLUGIN_ID}: availability prompt`);

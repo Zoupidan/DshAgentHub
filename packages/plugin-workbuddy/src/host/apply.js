@@ -12,7 +12,7 @@
  *
  * 约束：本文件属于 packages/*​/src（CI ② 扫描范围）—— 不得出现裸进程出口字样。
  */
-import { PLUGIN_ID, NS } from '../shared/constants.js';
+import { PLUGIN_ID, NS, TOOL_RUN, MEMBER_NAME } from '../shared/constants.js';
 import { createRuntime } from './config/runtime.js';
 import { Config } from './config/schema.js';
 import { createDispatcher } from './gateway/dispatch.js';
@@ -156,6 +156,20 @@ function apply(ctx, config) {
     autoStartDesktop: () => runtime.currentConfig()?.autoStartDesktop === true,
     instanceTimeoutMs: () => runtime.currentConfig()?.instanceTimeoutMs ?? 0,
   });
+  // ★ ① 身份上移（2026-10-17）：可用性 section 按"这个 agent 自己的可见面"分支 ——
+  //   成员（或团队未挂时的全局）见到工具口径；Lead 见到"走团队成员"口径。
+  const agentTeams = (() => { try { return ctx.get('agentTeams') ?? null; } catch { return null; } })();
+  const hasHarnessToolsForScope = (scope) => {
+    if (scope === undefined || scope === null) return true; // 无 scope 的取用方按老口径
+    try { return ctx.tools.get(TOOL_RUN, scope) !== undefined; } catch { return true; }
+  };
+  const isHarnessMember = (agent) => {
+    if (agentTeams === null || agent === undefined || agent === null) return false;
+    try {
+      const membership = agentTeams.tryMembership(agent);
+      return membership !== undefined && membership.role === 'teammate' && membership.name === MEMBER_NAME;
+    } catch { return false; }
+  };
   // ④ ★ U4 心脏：工具注册 + 开关心脏
   ctx.effect(() => reconcileTools(ctx, {
     runtime, sessions, config, Config, NS, detect: detectWorkBuddy, credits, dispatch, checkin,
@@ -193,7 +207,13 @@ function apply(ctx, config) {
       ctx.inject(['systemPrompt'], (sctx) => {
         sctx.effect(() => {
           const d = sctx.systemPrompt.section({
-            name: `${PLUGIN_ID}:availability`, order: 520, text: () => availabilityText(runtime),
+            name: `${PLUGIN_ID}:availability`,
+            order: 520,
+            // ★ ① 身份上移（2026-10-17）：按本 agent 的可见面分支（成员=工具口径 / Lead=团队成员口径）。
+            text: (context) => availabilityText(runtime, {
+              hasTools: hasHarnessToolsForScope(context?.scope),
+              teamMember: isHarnessMember(context?.agent),
+            }),
           });
           return () => d();
         }, `${PLUGIN_ID}: availability prompt`);

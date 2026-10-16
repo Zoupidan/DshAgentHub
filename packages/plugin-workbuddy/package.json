@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-workbuddy",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "把本机 WorkBuddy 桌面端暴露成 dsh 的模型面工具：经 CDP 追发/点火 + 桌面端内部自动化队列下发，零 CLI、零反代。",

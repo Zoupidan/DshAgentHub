@@ -35,6 +35,14 @@ export const TOOL_PURGE = 'opencode_purge';
 /** 审批面（八步之 8）：列出待批请求 / 回复决定。 */
 export const TOOL_APPROVALS = 'opencode_approvals';
 
+/**
+ * ★ ① 身份上移（2026-10-17）：本 harness 在 dsh 智能体团队里的**成员名**（lower-kebab，dsh 硬校验；不可复用）。
+ * 团队在场时，工具面（run/status/purge/approvals）只注册进"名为本值"的成员 scope —— Lead 不再直呼
+ * opencode_run，而是 spawn_teammate(name: 'opencode', description: 'OpenCode · …') 后走团队面。
+ * 常量消费点：tools/index.js（成员面安装）、apply.js（可用性 section 分支）、测试。
+ */
+export const MEMBER_NAME = 'opencode';
+
 /** 状态 bridge 路由前缀（host 注册 · client 消费）。 */
 export const ROUTE_PREFIX = '/plugin-opencode';
 export const ROUTE_STATUS = `${ROUTE_PREFIX}/status`;

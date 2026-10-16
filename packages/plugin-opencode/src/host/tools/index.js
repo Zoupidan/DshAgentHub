@@ -20,6 +20,9 @@ import { makeApprovalsTool } from './approvals.js';
 import { makePurgeTool } from './purge.js';
 import { makeRunTool } from './run.js';
 import { makeStatusTool } from './status.js';
+import { PLUGIN_ID, MEMBER_NAME } from '../../shared/constants.js';
+import { createHarnessMemberScope } from '../team/member-scope.js';
+import { installMemberTools } from '../team/member-tools.js';
 
 /**
  * @param {object} ctx 宿主 ctx（tools / effect / inject）
@@ -36,6 +39,13 @@ export function reconcileTools(ctx, { runtime, sessions, config, Config, NS, det
   /** @type {Array<() => void>} */
   let disposers = [];
 
+  // ★ ① 身份上移（2026-10-17）：团队在场 ⇒ 工具面归"成员身份"（名为 MEMBER_NAME 的 teammate），
+  //   Lead 与其它成员的全局面一个都不注册；团队服务缺席（永远为 null）时走下方原有的全局路径（回退）。
+  //   ★ 团队服务可能在本插件**之后**才就绪（bundle 加载顺序不定）⇒ 用 **deferred inject**（见 reconcile
+  //     结束后的那条 ctx.inject）：服务出现时创建成员 scope 并补跑一次收敛；永远不出现 ⇒ 保持 null。
+  /** @type {{setEnabled: Function, installedCount: Function, dispose: Function} | null} */
+  let memberScope = null;
+
   const reconcile = () => {
     const cfg = read();
     const probe = runtime.detected();
@@ -45,6 +55,18 @@ export function reconcileTools(ctx, { runtime, sessions, config, Config, NS, det
       void runtime.probe(detect, ctx, cfg);
     }
     const want = cfg?.enabled === true && (probe === null ? true : installed);
+    // ★ ① 身份上移（2026-10-17）：团队在场 ⇒ 工具面只装进成员 scope，全局一个都不注册。
+    if (memberScope !== null) {
+      // ★ 切到成员形态：装配顺序可能让全局先注册过 ⇒ 全局面先退场，再接管（身份唯一）。
+      if (disposers.length > 0) {
+        for (const d of disposers) d();
+        disposers = [];
+      }
+      memberScope.setEnabled(want);
+      runtime.setRegistrationError(null);
+      runtime.setRegistry(want ? REGISTRY_STATES.REGISTERED : afterUnregister(probe, installed));
+      return;
+    }
     if (want && disposers.length === 0) {
       const next = [];
       try {
@@ -103,6 +125,22 @@ export function reconcileTools(ctx, { runtime, sessions, config, Config, NS, det
   });
   // 探测落地回调也必须退订：卸载后仍有在途探测完成时，无退订会向已卸载的 ctx 注册工具。
   const offDetected = runtime.onDetected(reconcile);
+  // ★ ① 身份上移：团队服务 deferred inject（放在 settings 之后：收敛源先就位）——服务出现时
+  //   创建成员 scope 并补跑收敛；未挂 Teams 的组合这条 fiber 永不回调 ⇒ memberScope 保持 null ⇒ 全局注册（回退）。
+  ctx.inject(['agentTeams', 'agents'], (teamCtx) => {
+    memberScope = createHarnessMemberScope(ctx, {
+      pluginId: PLUGIN_ID,
+      memberName: MEMBER_NAME,
+      agentTeams: teamCtx.agentTeams,
+      agents: teamCtx.agents,
+      install: (scoped) => installMemberTools(scoped, { runtime, sessions, read, ctx, dispatch }),
+    });
+    queueMicrotask(() => { try { reconcile(); } catch { /* 收敛异常不炸注入纤维 */ } });
+    teamCtx.effect(() => () => {
+      try { memberScope?.setEnabled(false); } catch { /* 卸载尽最大努力 */ }
+      memberScope = null;
+    }, `${PLUGIN_ID}: member scope fiber`);
+  });
 
   return () => {
     offDetected();

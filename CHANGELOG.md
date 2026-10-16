@@ -2,6 +2,29 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.5.0] - 2026-10-17
+
+### 本次更新的目的
+
+调用形态升级为「DSH 智能体团队成员」：WorkBuddy / OpenCode 各以一名团队成员的身份存在，工具面归成员身份所有；主会话经由团队面完成委派，不再直呼工具。
+
+### 新增（Added）
+
+- **Harness 成员身份**：组合挂载了智能体团队（Agent Teams）时——
+  - 工具面（`workbuddy_run/status/purge/harvest`、`opencode_run/status/purge/approvals`）只对**名为 `workbuddy` / `opencode` 的团队成员**可见；主会话（Lead）的工具面上不再出现这些名字。
+  - 委派路径：`spawn_teammate(name:"workbuddy", description:"WorkBuddy · …")` 创建成员 → `send_message` 下发任务 → `wait_agent` 等回执；成员在团队面板可见、其会话可点开。
+  - 成员自带职责提示（下发 / 回原始回执 / 按同一会话应辩 / 不自己实现任务）；Lead 的指引明说工具不在其面上（by design）并给出团队路径。
+  - 未挂载 Teams 的组合自动回退为现有全局注册（与 0.4.x 行为一致）。
+- **回归闸**：成员作用域安装器生命周期与可用性文案分支的测试（4 个文件）。
+
+### 变更（Changed）
+
+- 可用性提示词按「本会话可见的工具面」分支：团队在场时的 Lead 分支不再给出直呼工具的指引。
+
+### 维护（Chore）
+
+- `test:host` 清单补入新测试文件；版本线 —— root / plugin-workbuddy `0.5.0`，plugin-opencode `0.2.0`。
+
 ## [0.4.1] - 2026-10-17
 
 ### 修复（Fixed）

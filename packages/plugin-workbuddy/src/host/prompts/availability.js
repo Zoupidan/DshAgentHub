@@ -259,6 +259,21 @@ const CONCURRENCY_BUDGET_HINT = ' Concurrency budget: at most 3 tasks in flight 
  *   上一句刚点名的 WorkBuddy 桌面；同一段内第二次提及，指代不歧义）。
  *   顺带把第一句拆成两句：单句从 206 降到 65/127，**没有为了压过 200 而换掉任何事实**。
  */
+/**
+ * ★ ① 身份上移（2026-10-17）Lead 口径：WorkBuddy 由名为 "workbuddy" 的团队成员执行。
+ * 触发条件 = 本 agent 的可见面**没有** workbuddy_run（团队在场时的 Lead；工具面归成员身份）。
+ * 只讲团队路径能兑现的事：spawn 约定（名字 + description 前缀）→ send_message → wait_agent → 再答。
+ * 反代红线照旧（不得把 freshProvider 设成 workbuddy）。
+ */
+const LEAD_MEMBER_ROUTE_TEXT = ' WorkBuddy is reachable through its team member: spawn_teammate with name '
+  + '"workbuddy" (lower-kebab-case; description must START with "WorkBuddy · " — e.g. "WorkBuddy · your work '
+  + 'runs by calling workbuddy_run; you do not implement it yourself") creates the real member that operates '
+  + 'the local WorkBuddy desktop. Message it the task with send_message (a queued message is already stored — '
+  + 'never resend it) and wait with wait_agent for its receipt before answering the user. The workbuddy_* '
+  + 'tools are NOT on your own tool surface by design — they belong to that member\'s identity; do not attempt '
+  + 'to call them. Do NOT set the team\'s freshProvider to workbuddy: that would route dsh\'s own generation '
+  + 'through WorkBuddy, which this plugin refuses to do.';
+
 function subagentRouteHint() {
   // ★ 成员名必须是 lower-kebab-case —— dsh 硬校验，实测 `WorkBuddy` 被直接拒：
   //   "teammate name must be lower-kebab-case, at most 64 characters, and not 'lead'"。
@@ -457,7 +472,11 @@ function lastFailureHint(runtime) {
  * @param {object} runtime
  * @returns {string}
  */
-export function availabilityText(runtime) {
+export function availabilityText(runtime, opts = {}) {
+  // ★ ① 身份上移（2026-10-17）：调用方（apply 的 section thunk）按"该 agent 的可见面"传入；
+  //   缺省 = 老口径（有工具、非团队成员）—— 老调用方与老测试逐字不动。
+  const hasTools = opts?.hasTools !== false;
+  const teamMember = opts?.teamMember === true;
   const probe = runtime.detected();
   const registry = runtime.registry();
 
@@ -475,6 +494,12 @@ export function availabilityText(runtime) {
     //   就成了假状态（模型据此会放弃一次本可成功的下发）⇒ 跟着 `registry` 实况说。
     //   两条旧句子**逐字保留**在各自仍然为真的分支里（既有契约）。
     if (registry === REGISTRY_STATES.REGISTERED) {
+      if (!hasTools) {
+        return 'WorkBuddy availability is still being determined (the read-only detection has not finished yet). '
+          + 'Spawn the team member "workbuddy" to delegate in the meantime (description must START with '
+          + '"WorkBuddy · "): a run it starts now waits for that detection and is rejected only if the WorkBuddy '
+          + 'desktop turns out to be absent.';
+      }
       return 'WorkBuddy availability is still being determined (the read-only detection has not finished yet). '
         + 'The workbuddy_run / workbuddy_status tools are offered in the meantime: a run started now waits for '
         + 'that detection and is rejected only if the CLI turns out to be absent.';
@@ -499,6 +524,13 @@ export function availabilityText(runtime) {
         'tell the user another plugin may already own those tool names, and do not retry delegating.';
     }
     /**
+     * ★ ① 身份上移（2026-10-17）：本 agent 的可见面上没有 workbuddy_*（团队在场时 = Lead）——
+     *   指引走团队成员身份；不承诺成员会话里没有的东西。
+     */
+    if (!hasTools) {
+      return LEAD_MEMBER_ROUTE_TEXT + CONCURRENCY_BUDGET_HINT + debateHint(runtime);
+    }
+    /**
      * DEGRADED 有**四个**互不相同的成因，措辞不得只认其中一个：
      *   ① `run.js` 运行期缺失（node 跑不起来）② `run.js` 真启动失败（"用户取消"不算）
      *   ③ `run.js` §4.5 判定 `flagVerdict==='rejected'`（参数被拒 —— 退出码可能仍为 0）
@@ -515,7 +547,10 @@ export function availabilityText(runtime) {
       + '(read progress with job_output, cancel with job_kill), and workbuddy_status to inspect the local '
       + 'WorkBuddy install and the most recent run.'
       + CONCURRENCY_BUDGET_HINT
-      + subagentRouteHint() + debateHint(runtime) + continuityHint(runtime) + cdpIgnitionHint(runtime) + degraded
+      // ★ ① 身份上移（2026-10-17）：成员视角不再给"怎么招人 / 怎么质疑"的 Lead 指引
+      //   （成员职责段 + 团队面已承担；旁观者口径由 LEAD_MEMBER_ROUTE_TEXT 承担）。
+      + (teamMember ? '' : subagentRouteHint() + debateHint(runtime))
+      + continuityHint(runtime) + cdpIgnitionHint(runtime) + degraded
       + overrideHint(runtime) + lastFailureHint(runtime)
     );
   }

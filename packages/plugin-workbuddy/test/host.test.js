@@ -675,7 +675,14 @@ test('判据① + ⑤：ON（已装）⇒ 注册四工具；每定义含 output.
   //   读到 null 是"读早了"，不是缺陷。
   const ready = await waitFor(async () => (await host.statusPayload()).json.probe !== null);
   assert.ok(ready, '探测应在线性时间内出结论');
-  assert.equal(host.state.pendingInjects.length, 0, 'deferred inject 的依赖应全部就绪');
+  // ★ ① 身份上移（2026-10-17）：本夹具不提供 `agentTeams`/`agents`（模拟未挂团队的组合）⇒
+  //   成员面 fiber 按设计永久挂起（服务出现时才回调并接管工具面）；这不影响装配——
+  //   下方断言测的是**全局回退面**。
+  assert.deepEqual(
+    host.state.pendingInjects.map((p) => p.deps),
+    [['agentTeams', 'agents']],
+    '唯一未就绪的是可选的团队面（自愈条件：服务出现时补跑收敛）',
+  );
 
   const names = [...host.state.registration.keys()].sort();
   assert.deepEqual(names, ['workbuddy_harvest', 'workbuddy_purge', 'workbuddy_run', 'workbuddy_status']);
