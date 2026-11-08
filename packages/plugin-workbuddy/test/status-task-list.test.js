@@ -353,17 +353,25 @@ test('接线：workbuddy_status 的 tasks 段（含 all 切片与 output.schema 
     seedDb(home, [
       { id: 'task-1', name: '会话清单开发', status: 'ACTIVE', created_at: 3000 },
       { id: 'task-2', name: '默认直连点火', status: 'ACTIVE', created_at: 2000 },
+      { id: 'task-old', name: '已退役的历史任务', status: 'ACTIVE', created_at: 1000, deleted_at: 9000 },
     ]);
     const tool = makeStatusTool(createMockRuntime(), () => ({}), {}, null);
     const sliced = await tool.execute({ section: 'tasks' });
     assert.equal(sliced.section, 'tasks');
     assert.equal(sliced.tasks.ok, true, sliced.tasks.reason ?? '');
-    assert.deepEqual(sliced.tasks.tasks.map((t) => t.title), ['会话清单开发', '默认直连点火']);
+    assert.deepEqual(sliced.tasks.tasks.map((t) => t.title), ['会话清单开发', '默认直连点火'], '默认只列活行');
     assert.deepEqual(validateJsonSchemaValue(tool.output.schema, sliced, 'workbuddy_status'), [], 'tasks 切片必须落在 output.schema 内');
+
+    // ★ 0.6.1 收口：历史任务要**显式**要（includeDeleted + taskLimit），不默认摊进每轮载荷。
+    const history = await tool.execute({ section: 'tasks', includeDeleted: true, taskLimit: 1 });
+    assert.equal(history.tasks.ok, true);
+    assert.equal(history.tasks.count, 1);
+    assert.equal(history.tasks.tasks[0].id, 'task-1');
+    assert.deepEqual(validateJsonSchemaValue(tool.output.schema, history, 'workbuddy_status'), [], '带参数切片仍须落在 schema 内');
 
     const all = await tool.execute({});
     assert.equal(all.tasks.ok, true);
-    assert.equal(all.tasks.tasks.length, 2);
+    assert.equal(all.tasks.tasks.length, 2, "'all' 只带活行（默认口径）");
     assert.deepEqual(validateJsonSchemaValue(tool.output.schema, all, 'workbuddy_status'), [], 'all 载荷必须落在 output.schema 内');
   });
 });

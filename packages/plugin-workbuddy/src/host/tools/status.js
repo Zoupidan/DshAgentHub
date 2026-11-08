@@ -140,11 +140,21 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
     reprobe: { type: 'boolean', description: 'Re-run the read-only CLI detection before reporting.' },
     section: {
       type: 'string',
-      description: "Filter status slice: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'checkin' (defaults to 'all').",
+      description: "Filter status slice: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'tasks' | 'checkin' (defaults to 'all').",
     },
     compact: {
       type: 'boolean',
       description: 'Format models as a compact dictionary map of { [modelId]: factor } strictly <= 1KB.',
+    },
+    // ★ 2026-11-08（0.6.1 收口）：`tasks` 段默认只列活行（`deleted_at IS NULL`）；
+    //   用户问「之前那些任务叫什么」时，历史在软删行里 ⇒ 用这两个参数显式要，而不是把历史默认摊进每轮载荷。
+    includeDeleted: {
+      type: 'boolean',
+      description: "tasks section only: also include soft-deleted (retired) tasks, marked active:false.",
+    },
+    taskLimit: {
+      type: 'number',
+      description: 'tasks section only: max rows to return (default 50, hard cap 200); see `truncated` for more.',
     },
   },
   output: {
@@ -513,7 +523,10 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
           account: currentAccountDetection(),
           balance: liveBalance,
           creditsRemain: liveBalance,
-          tasks: readTaskList(),
+          tasks: readTaskList({
+            includeDeleted: args?.includeDeleted === true,
+            ...(typeof args?.taskLimit === 'number' ? { limit: args.taskLimit } : {}),
+          }),
         };
       }
       // ── 默认: section === 'all' (全量防裁剪安全周边布局) ──

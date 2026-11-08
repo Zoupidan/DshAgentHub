@@ -18,6 +18,8 @@
   `includeDeleted:true` 连软删历史一起给（`active:false`）；`limit` 默认 50 / 上限 200 / `truncated` 如实标注。
   读不到（库缺失 / 被锁 / 旧 schema 缺列）⇒ `ok:false + reason`（逐列点名），**绝不用空数组冒充"没有任务"**；
   零写入、零网络（同 `conversations` 同源纪律）。状态路由载荷同步新增 `taskList`。
+- **工具参数**：`includeDeleted`（tasks 段连软删历史一起给，`active:false`）与 `taskLimit`（条数，默认 50 / 上限 200）——
+  历史必须**显式**要，不默认摊进每轮载荷。
 
 ### 验证（Verification）
 
