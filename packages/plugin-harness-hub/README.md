@@ -17,7 +17,7 @@
 | `test/client.test.js` | 伪宿主浅渲染验收（含**跨包三处同步**断言） |
 
 壳组件结构逐行对齐官方同款壳（`@deepseek-ai/dsh-client-ui-settings-plugins` 的
-PluginsSettingsSection，本机 0.2.0-rc.2 安装体只读实测）：标签行只在 **≥2 个标签**时出现；
+PluginsSettingsSection，本机 **0.2.1-rc.5** 安装体只读复核 + `test:client` 10/10 复测）：标签行只在 **≥2 个标签**时出现；
 1 个标签直接当整页；0 个显示空态；键盘导航（←/→/Home/End）；访问过的标签保持挂载。
 
 ## 子槽契约（各 harness 的挂入点）

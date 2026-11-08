@@ -57,7 +57,7 @@ graph TB
         H["设置「Harness 接入」<br/>WorkBuddy / OpenCode 两卡 · 运行态状态标签"]
     end
     subgraph CH["同机通道（零反代 · 零 CLI · 不跨网）"]
-        W["WorkBuddy 通道<br/>自动化队列 + CDP 追发 / 点火（可选）"]
+        W["WorkBuddy 通道<br/>默认 CDP 直连（点火/追发）· 计划任务仅回退"]
         O["OpenCode 通道<br/>桌面端本机 HTTP 服务（现读 service.json）"]
     end
     subgraph GUI["桌面端界面（全程可见）"]
@@ -76,7 +76,7 @@ graph TB
     H -.只读状态.-> R
 ```
 
-委派只有一条路：**团队成员**（工具面归成员所有；v0.5.1 起旧的子代理通道已删除）；两条同机通道（WorkBuddy：自动化队列 + CDP 追发·点火；OpenCode：桌面端本机 HTTP 服务）。任务落在桌面端自己的界面里、看得见；成员拿回结构化回执（状态 / 正文 / 用量）并回报主会话，需要人拍板的节点走审批。
+委派只有一条路：**团队成员**（工具面归成员所有；v0.5.1 起旧的子代理通道已删除）；两条同机通道（WorkBuddy：**默认 CDP 直连点火/追发，计划任务仅作回退**；OpenCode：桌面端本机 HTTP 服务）。任务落在桌面端自己的界面里、看得见；成员拿回结构化回执（状态 / 正文 / 用量）并回报主会话，需要人拍板的节点走审批。
 
 ---
 
@@ -111,7 +111,7 @@ npm run link:dsh-deps
   （本机示例：`%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-plugin-opencode`
   → `…\DshAgentHub\packages\plugin-opencode`）；
 - **重启 DshAgentHub 生效**（插件在宿主启动时装载，无热载；改完源码同样重启才生效）；
-- **启用**：设置 → **Harness 接入** → 对应卡片打开「启用」（三卡默认关；关着时零下发，不往桌面端写任何东西）。
+- **启用**：设置 → **Harness 接入** → 对应卡片打开「启用」（两卡默认关；关着时零下发，不往桌面端写任何东西）。
 
 两点补充，避免踩坑：
 
@@ -136,7 +136,7 @@ npm run link:dsh-deps
 - 每日签到行显示「今日已领（今日 +N，连签 M 天）」/「今日未领，将自动领取」/「签到活动已结束」；配置组里有「自动领取每日积分」开关（默认开，关掉即停，只读状态不停）；
 - 运行状态区会说明最近一次下发是「**复用上次对话续发**」还是「**续发失败，已回退新开对话**」；内部通道、耗时与原因码收在"任务详情"折叠里。
 
-> **调试端口（`enableDirectIgnition` / `enableMultiTurnFollowUp` 的前置）**：一次性**用户级**环境变量 `WORKBUDDY_REMOTE_DEBUGGING_PORT=9222`——设置后**每次启动都带调试口，一次配置长期有效**（未配置时任务照跑不丢，自动回退路线见「已知限制」）。模型侧的 `workbuddy_status` 会给出 `cdp` / `ignition` 两块**只读**结论——插件不代设环境变量、不代杀也不代重启 WorkBuddy。
+> **调试端口（默认直连点火 + 追发的前置）**：一次性**用户级**环境变量 `WORKBUDDY_REMOTE_DEBUGGING_PORT=9222`——设置后**每次启动都带调试口，一次配置长期有效**；**没配也照跑**：直接点火探测不到 CDP 时自动回退计划任务队列（回执带 `fallback` / `fallbackReason`，任务不丢）。模型侧的 `workbuddy_status` 会给出 `cdp` / `ignition` 两块**只读**结论——插件不代设环境变量、不代杀也不代重启 WorkBuddy。
 
 ---
 
@@ -153,6 +153,7 @@ $s = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-workbuddy/status"
 "modelsSource    = $($s.modelsSource)"
 "models.count    = $($s.models.Count)"
 "credits.ok      = $($s.credits.ok)  remain=$($s.credits.remain)"
+"sessionList.ok  = $($s.sessionList.ok)  conversations=$($s.sessionList.sessions.Count)"
 ```
 
 `modelsSource` 以 `desktop-live:` 开头表示目录与倍率来自桌面端实时接口；以 `desktop-cache:` 开头表示已回落到本地缓存，目录可能偏少、倍率可能过期。
@@ -193,10 +194,11 @@ $s2 = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-opencode/status"
 ### WorkBuddy 通道
 
 - **推理强度以桌面端的实际口径为准**。插件保证把选定的档位写进下发请求，能否生效由桌面端决定，实际生效情况以回执为准。
-- **多轮归组默认每轮都是新对话**；`enableMultiTurnFollowUp` 开启后（默认关）才会在记性命中时续接同一条对话，且追发失败会自动回退新开，任务不丢。
+- **下发默认直连点火（CDP）**：`enableDirectIgnition` 默认开（设置里可关）。CDP 不可用 / 建会话被拒等**派发前**失败 ⇒ 自动回退计划任务队列（回执带 `fallback` / `fallbackReason`，任务不丢）；**派发后**失败绝不回退（同一条 prompt 再跑一遍就是双份积分）。回执的 `argv_preview` 与 `lastRun.transport` 按实际通道如实记录。
+- **多轮归组默认每轮都是新对话**；`enableMultiTurnFollowUp` 开启后（默认关）才会在记性命中时续接同一条对话，且追发失败会自动回退点火新开，任务不丢。
 - **模型 / 思考强度只识别、不改动**。追发轮不发送任何模型或强度设定，只读回报该对话的当前设定（回执 `follow_up.conversationModel` / `conversationEffort`，读不到为 `null`）；你在 WorkBuddy 桌面端手动改过的值会被如实带回，插件不复位、不回写。
 - **追发会真实消耗 WorkBuddy 积分**（实测约 0.01–0.4 credit/轮，随 prompt 大小浮动）；计费记账目前未接入，由桌面端账单为准。
-- **调试端口 = 一次性配置，设好即长期有效**：用户级环境变量 `WORKBUDDY_REMOTE_DEBUGGING_PORT=9222` 设置后**每次启动都带调试口**（本机已完成配置，且真机验证过同会话追发：复述暗号 + 落库单会话）。未配置时任务照跑不丢：追发回退点火路线、直接点火回退计划任务队列，回执与状态卡带 `fallback` / `fallbackReason`。**插件只告知、只询问**——不代设环境变量、不代杀、不代重启 WorkBuddy；绝不静默回退、绝不把回退的那一轮说成走 direct。
+- **调试端口 = 一次性配置，设好即长期有效**：用户级环境变量 `WORKBUDDY_REMOTE_DEBUGGING_PORT=9222` 设置后**每次启动都带调试口**（本机已完成配置，且真机验证过同会话追发：复述暗号 + 落库单会话）。**未配置也照跑**：默认直连点火探测不到调试口 ⇒ 自动回退计划任务队列；追发失败 ⇒ 回退点火新开；回执与状态卡带 `fallback` / `fallbackReason`。**插件只告知、只询问**——不代设环境变量、不代杀、不代重启 WorkBuddy；绝不静默回退、绝不把回退的那一轮说成走 direct。
 - **建议先正常用过 WorkBuddy 再点火**：插件从本机数据解析"当前登录账号"来归属下发记录；全新安装且桌面端从未有过任何会话记录时，归属解析可能拿不到值，点火行会以无主形态写入（桌面端是否派发取决于其版本行为）。
 - **积分有结算延迟**（约一分钟），读数自带新鲜度标注；刚跑完立刻读到的可能是旧值。
 

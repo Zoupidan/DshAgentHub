@@ -12,7 +12,7 @@ WorkBuddy、读它的状态、收割结果、精准清理。插件**只经桌面
 | 工具 | 作用 | 关键参数 |
 |---|---|---|
 | `workbuddy_run` | 下发一个编码任务（后台作业） | `task`（必填）、`session_key`、`model`、`effort`、`cwd`、`permission_mode` |
-| `workbuddy_status` |  inspect 本机 WorkBuddy 安装与最近一次下发 | `section`（models/credits/checkin/sessions/overview）、`compact` |
+| `workbuddy_status` | inspect 本机 WorkBuddy 安装、最近一次下发与**桌面端真实会话清单** | `section`（overview/models/credits/checkin/sessions/**conversations**）、`compact` |
 | `workbuddy_harvest` | 按 `automation_id` 收割过去/正在跑的任务结果 | `automation_id`（必填）、`wait_ms` |
 | `workbuddy_purge` | 软删一条 WorkBuddy 对话 + 清 session map 记性 | `session_key` 或 `idLike` |
 
@@ -26,9 +26,12 @@ WorkBuddy、读它的状态、收割结果、精准清理。插件**只经桌面
 ## 在 DSH 里怎么看状态
 
 1. **系统提示**：每个模型回合都会出现一段 "WorkBuddy delegation is available/unavailable…"，
-   包含当前生效的 model/effort、追发开关、CDP 前置条件、最近一次失败原因。
+   包含当前生效的 model/effort、默认直连点火（CDP）与回退队列、追发开关、最近一次失败原因。
 2. **`workbuddy_status`**：模型可随时调；`section` 单节 ≤2KB 不截断，`compact:true` 全量字典化。
-3. **DSH 界面状态卡片**：与状态路由同源（三态：未安装 / 已装但 OFF / 已装且 ON）。
+   `conversations` 段是**桌面端真实会话清单**（只读直读 `workbuddy.db`）：标题 / 创建与活跃时间 / 是否仍活跃，
+   默认 50 条；读不到 ⇒ `ok:false + reason`（**不用空数组冒充"没有会话"**），且全程零写入、零网络。
+3. **DSH 界面状态卡片**：与状态路由同源（三态：未安装 / 已装但 OFF / 已装且 ON）；卡片状态**自动刷新**
+   （进入视口 / 回到窗口 / 配置变化立即拉，可见期在途 3s、空闲 15s，不可见 0 请求）。
 
 ## 智能团队（Agent Teams）用法
 
@@ -53,8 +56,9 @@ WorkBuddy 路由，就是本项目禁止的反代。插件只做"成员是 dsh a
 
 ## 架构红线（改动前必读）
 
-- **唯一通道**：CDP（`ws://127.0.0.1:9222`，追发/点火）+ 桌面端内部自动化队列
-  （`~/.workbuddy/workbuddy.db` 的 `automations` 表）+ wbipc 命名管道（桌面端代发 HTTP）。
+- **唯一通道**：CDP（`ws://127.0.0.1:9222`，**默认点火/追发**）+ 桌面端内部自动化队列
+  （`~/.workbuddy/workbuddy.db` 的 `automations` 表，**仅作回退**）+ wbipc 命名管道（桌面端代发 HTTP）。
+  下发默认走 CDP 直建（零计划任务 INSERT）；CDP 不可用或派发前失败 ⇒ 自动回退计划任务队列（任务不丢）。
 - **零 CLI**：任何路径（正常流/回退/探测）不得拉起 workbuddy.exe CLI、CodeBuddy Launcher、
   任何显隐 Shell/控制台进程（CI 红线 `check-no-process-exec` / `check-no-exec-probe` 钉死）。
 - **零反代**：不监听端口、不转发流量、不做中间人（18488/sidecar 已废除，测试负控钉死）。
