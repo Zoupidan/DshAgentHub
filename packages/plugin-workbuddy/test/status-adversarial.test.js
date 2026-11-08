@@ -293,7 +293,7 @@ test('Edge Case: Unknown / invalid section names return clear guidance without t
     assert.ok(res.message.includes('Unknown section'), `Input '${input}' must have guidance message`);
     assert.deepEqual(
       res.supportedSections,
-      ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'],
+      ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'tasks', 'checkin'],
       'Must enumerate all valid sections in guidance',
     );
     // Perimeter safety preserved

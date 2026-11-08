@@ -103,7 +103,7 @@ test('R1: makeStatusTool 声明 parameters 与 output.schema 契约', () => {
   //   ③ 顶层 required 只钉跨分支不变量 balance / creditsRemain（子集切片才能合法）。
   assert.deepEqual(
     tool.output.schema.properties.section.enum,
-    ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'],
+    ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'tasks', 'checkin'],
     'section 必须被声明且枚举与实现一致',
   );
   assert.deepEqual(
@@ -123,6 +123,11 @@ test('R1: makeStatusTool 声明 parameters 与 output.schema 契约', () => {
   assert.ok(
     tool.output.schema.properties.conversations,
     'conversations 段必须被声明（additionalProperties:false 之下，未声明的键必被宿主校验打回）',
+  );
+  // ★ 2026-11-08（后续）：`tasks` 段同理 —— 桌面端任务清单（automations.name 即标题）。
+  assert.ok(
+    tool.output.schema.properties.tasks,
+    'tasks 段必须被声明（additionalProperties:false 之下，未声明的键必被宿主校验打回）',
   );
 });
 
@@ -175,6 +180,7 @@ test('R1: 全部分支载荷（all / all+compact / 五个切片 / invalid_sectio
     ['section=credits', { section: 'credits' }],
     ['section=sessions', { section: 'sessions' }],
     ['section=conversations', { section: 'conversations' }],
+    ['section=tasks', { section: 'tasks' }],
     ['section=checkin', { section: 'checkin' }],
     ['invalid_section 兜底', { section: 'no_such_slice' }],
   ];
@@ -350,7 +356,7 @@ test('R1: 未知参数提供清晰参数指引与宽容回退', async () => {
 
   assert.equal(res.error, 'invalid_section');
   assert.match(res.message, /Unknown section 'non_existent_section'/);
-  assert.deepEqual(res.supportedSections, ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin']);
+  assert.deepEqual(res.supportedSections, ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'tasks', 'checkin']);
   assert.equal(res.balance, 50.0);
   assert.equal(res.registry, 'REGISTERED');
 });

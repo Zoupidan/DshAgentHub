@@ -27,6 +27,7 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成**团队里看得见、�
 | 直接点火（免排队，**默认**） | `enableDirectIgnition` **默认开**：点火轮经桌面端 CDP 直接建对话并下发，**零计划任务 INSERT**。CDP 不可用或派发**前**失败 ⇒ 自动回退计划任务队列（回执带 `fallback` / `fallbackReason`，任务不丢）；派发**后**失败**绝不回退**——同一条 prompt 再跑一遍就是双份积分。前置条件见「已知限制」。 |
 | 模型与推理强度 | 下发时可选模型与推理强度（6 档），都不指定时按最省的兜底，实际用了哪个以回执为准。 |
 | 会话清单（只读） | `workbuddy_status` 的 `conversations` 段直读桌面端库（`readOnly`），列出真实会话的**标题** / 创建与活跃时间 / 是否仍活跃（默认最近 50 条）；读不到就 `ok:false` + 原因，**不用空数组冒充"没有会话"**。状态路由载荷同步带 `sessionList`。 |
+| 任务清单（只读） | `workbuddy_status` 的 `tasks` 段直读桌面端 `automations` 表（`name` 即**任务标题**），列出状态 / 计划类型 / 起止时间 / 是否仍活跃（默认只列活行，`includeDeleted:true` 带历史）；读不到就 `ok:false` + 原因，**不用空数组冒充"没有任务"**。状态路由载荷同步带 `taskList`。 |
 | 每日签到自动领取 | Buddy 加油站每日积分：状态面读到"活动进行中且今日未签"时在后台顺手领掉（先查后领、领完复核，幂等；今日已领/非活动季静默收尾）。开关 `enableAutoCheckin` 默认开，关掉即停。 |
 | 积分只读显示 | 设置卡片上有一行「剩余积分」，只读展示，读不到就明说读不到。 |
 | 启动清理 | 插件启动时回收上一次遗留的下发记录，不留会自己再跑的活任务。 |
@@ -154,6 +155,7 @@ $s = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-workbuddy/status"
 "models.count    = $($s.models.Count)"
 "credits.ok      = $($s.credits.ok)  remain=$($s.credits.remain)"
 "sessionList.ok  = $($s.sessionList.ok)  conversations=$($s.sessionList.sessions.Count)"
+"taskList.ok     = $($s.taskList.ok)  tasks=$($s.taskList.tasks.Count)"
 ```
 
 `modelsSource` 以 `desktop-live:` 开头表示目录与倍率来自桌面端实时接口；以 `desktop-cache:` 开头表示已回落到本地缓存，目录可能偏少、倍率可能过期。

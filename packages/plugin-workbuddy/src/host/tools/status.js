@@ -19,6 +19,7 @@ import { readModelCatalog, detectionStateOf } from '../launch/model-catalog.js';
 // ★ 2026-11-08：桌面端**真实**会话清单（带标题）的单一读取口 —— 本工具面的 `conversations` 段与
 //   状态路由的 `sessionList` 字段共用它，两出口不可能给出两份清单（与 model-catalog / cost-catalog 同一条纪律）。
 import { readSessionList } from '../launch/session-list.js';
+import { readTaskList } from '../launch/task-list.js';
 import { currentAccountDetection, workbuddyDbPath, loadSqlite } from '../gateway/automation.js';
 import { detectWorkBuddy } from '../probe/detect.js';
 // 档位能力表与状态路由**共用同一函数**（单一来源；此前两处各写一份已漂移）。
@@ -132,7 +133,7 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
     "database cannot be read. Note 'sessions' (this plugin's session memory) and 'conversations' " +
     '(the desktop list) are two different things. ' +
     'Pass reprobe:true to re-run the read-only detection (it never launches the CLI). ' +
-    "Use section ('all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'checkin') to retrieve slices " +
+    "Use section ('all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'tasks' | 'checkin') to retrieve slices " +
     "(most <= 2KB; 'conversations' is a capped list — check its `truncated` flag for more). " +
     'Use compact:true to receive a compact models multiplier dictionary <= 1KB.',
   parameters: {
@@ -284,6 +285,9 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
         //   这里是桌面端数据库里的对话（带标题）。同名会把两种语义搅成一份，且形状互斥
         //   （`sessions` 的 items 要 session_key 等必填字段，桌面清单没有）。
         conversations: { type: 'json' },
+        // ★ 2026-11-08：桌面端**任务清单**（只读；automations 表）。与 conversations 同款理由：json 型，
+        //   结构由 launch/task-list.js 单处承载（{ ok, tasks[], count, truncated, reason }）。
+        tasks: { type: 'json' },
         inFlight: {
           type: 'array',
           items: {
@@ -308,7 +312,7 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
         section: {
           type: 'string',
           description: "Echoed section name; present only in sliced responses ('overview'|'models'|'credits'|'sessions'|'conversations'|'checkin'), absent for 'all'.",
-          enum: ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'],
+          enum: ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'tasks', 'checkin'],
         },
         count: { type: 'integer', description: "Number of models in the compact dictionary; present only in section='models'." },
         credits: { type: 'json', description: "Full credits snapshot (packages/counters); present only in section='credits'." },
@@ -390,13 +394,13 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
       // ★ 每日签到快照：与状态路由同源（projection 单一来源）；未接线 ⇒ null（不是"未签"）。
       const checkinSummary = checkin === null || typeof checkin.projection !== 'function' ? null : checkin.projection();
 
-      // ★ R1：分节过滤逻辑 (section: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'checkin')
+      // ★ R1：分节过滤逻辑 (section: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'tasks' | 'checkin')
       const section = typeof args?.section === 'string' ? args.section.trim().toLowerCase() : 'all';
-      const validSections = ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'];
+      const validSections = ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'tasks', 'checkin'];
       if (!validSections.includes(section)) {
         return {
           error: 'invalid_section',
-          message: `Unknown section '${args.section}'. Supported sections: 'all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'.`,
+          message: `Unknown section '${args.section}'. Supported sections: 'all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'tasks', 'checkin'.`,
           supportedSections: validSections,
           registry: runtime.registry(),
           account: currentAccountDetection(),
@@ -500,6 +504,18 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
         };
       }
 
+      // ── 独立切片 7: tasks (桌面端任务清单，只读) ──
+      //   ★ 2026-11-08：`automations.name` 就是任务标题（本机实测），此前只能靠 automation_id 逐条 harvest。
+      //   默认只列活行；`includeDeleted:true` 连软删历史一起给（历史行 `active:false`）。
+      if (section === 'tasks') {
+        return {
+          section: 'tasks',
+          account: currentAccountDetection(),
+          balance: liveBalance,
+          creditsRemain: liveBalance,
+          tasks: readTaskList(),
+        };
+      }
       // ── 默认: section === 'all' (全量防裁剪安全周边布局) ──
       const isCompact = args?.compact === true;
       return {
@@ -546,6 +562,8 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
         //   每轮要读的大载荷，清单在这里是「扫一眼最近在聊什么」，不是全量导出；`truncated`
         //   会如实标出还有更多，模型据此改用 section='conversations' 拿完整的 50 条。
         conversations: readSessionList({ limit: 20 }),
+        // ★ 任务清单（只读；automations 表）。同 conversations：'all' 只取 20 条，完整清单用 section='tasks'。
+        tasks: readTaskList({ limit: 20 }),
         // ── 底部安全防线 (Bottom Perimeter: 会话与运行历史) ──
         sessions: sessionSummary(sessions).map((s) => ({
           session_key: s.sessionKey,

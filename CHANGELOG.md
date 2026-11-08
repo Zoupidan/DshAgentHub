@@ -2,6 +2,30 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.6.1] - 2026-11-08
+
+### 本次更新的目的
+
+补上「任务清单」的只读读取面。此前 `workbuddy_status` 只能看"在途作业"与"最近一次下发"，
+**看不到桌面端有哪些计划任务、叫什么**（历史结论是 `workbuddy_harvest` 必须先有 `automation_id`）。
+真源一直存在：桌面端 `automations.name` 就是任务标题。
+
+### 新增（Added）
+
+- **任务清单段**（`workbuddy_status` 的 `tasks`）：只读直读桌面端 `workbuddy.db` 的 `automations` 表，
+  返回 `{ id, title, status, scheduleType, createdAt, updatedAt, lastRunAt, nextRunAt, validUntil, active }`；
+  标题 `name` → `prompt` 首行 → `(untitled)`，120 code point 截断；默认只列活行（`deleted_at IS NULL`），
+  `includeDeleted:true` 连软删历史一起给（`active:false`）；`limit` 默认 50 / 上限 200 / `truncated` 如实标注。
+  读不到（库缺失 / 被锁 / 旧 schema 缺列）⇒ `ok:false + reason`（逐列点名），**绝不用空数组冒充"没有任务"**；
+  零写入、零网络（同 `conversations` 同源纪律）。状态路由载荷同步新增 `taskList`。
+
+### 验证（Verification）
+
+- 新增 `status-task-list.test.js`（11 例：标题三态/截断、活行与软删、排序、limit/truncated、
+  失败纪律、旧 schema 逐列点名、只读哈希、无网络副作用、工具面与路由两个出口接线）；
+- `npm run ci:redlines` 4/4；`npm run test:host` **674/674**；`npm run test:client` **166/166**；
+- 真库只读冒烟（2026-11-08）：活行 0（此前 8 条陈旧行已退役）、历史 50 条可读且标题来自 `name`。
+
 ## [0.6.0] - 2026-11-08
 
 ### 本次更新的目的

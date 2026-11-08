@@ -12,7 +12,7 @@ WorkBuddy、读它的状态、收割结果、精准清理。插件**只经桌面
 | 工具 | 作用 | 关键参数 |
 |---|---|---|
 | `workbuddy_run` | 下发一个编码任务（后台作业） | `task`（必填）、`session_key`、`model`、`effort`、`cwd`、`permission_mode` |
-| `workbuddy_status` | inspect 本机 WorkBuddy 安装、最近一次下发与**桌面端真实会话清单** | `section`（overview/models/credits/checkin/sessions/**conversations**）、`compact` |
+| `workbuddy_status` | inspect 本机 WorkBuddy 安装、最近一次下发、**桌面端真实会话清单**与**任务清单** | `section`（overview/models/credits/checkin/sessions/**conversations**/**tasks**）、`compact` |
 | `workbuddy_harvest` | 按 `automation_id` 收割过去/正在跑的任务结果 | `automation_id`（必填）、`wait_ms` |
 | `workbuddy_purge` | 软删一条 WorkBuddy 对话 + 清 session map 记性 | `session_key` 或 `idLike` |
 
@@ -30,6 +30,8 @@ WorkBuddy、读它的状态、收割结果、精准清理。插件**只经桌面
 2. **`workbuddy_status`**：模型可随时调；`section` 单节 ≤2KB 不截断，`compact:true` 全量字典化。
    `conversations` 段是**桌面端真实会话清单**（只读直读 `workbuddy.db`）：标题 / 创建与活跃时间 / 是否仍活跃，
    默认 50 条；读不到 ⇒ `ok:false + reason`（**不用空数组冒充"没有会话"**），且全程零写入、零网络。
+   `tasks` 段是**桌面端任务清单**（只读直读 `automations` 表；`name` 就是任务标题）：状态 / 计划类型 /
+   起止时间 / 是否仍活跃，默认只列活行（`includeDeleted:true` 带历史）；同样的失败纪律与只读纪律。
 3. **DSH 界面状态卡片**：与状态路由同源（三态：未安装 / 已装但 OFF / 已装且 ON）；卡片状态**自动刷新**
    （进入视口 / 回到窗口 / 配置变化立即拉，可见期在途 3s、空闲 15s，不可见 0 请求）。
 

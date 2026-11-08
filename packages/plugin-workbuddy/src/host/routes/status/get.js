@@ -46,6 +46,7 @@ import { disabledSnapshot, readCostCatalog } from '../../launch/cost-catalog.js'
 import { desktopModels } from '../../launch/desktop-models.js';
 import { readModelCatalog, detectionStateOf } from '../../launch/model-catalog.js';
 import { readSessionList } from '../../launch/session-list.js';
+import { readTaskList } from '../../launch/task-list.js';
 import { currentAccountDetection } from '../../gateway/automation.js';
 import { sessionSummary } from '../../session/map.js';
 
@@ -205,6 +206,10 @@ export function makeStatusRoute(settings, runtime, ns, env = process.env, sessio
         //   ★ 不套 ①硬闸：`sessions[]` / `account` 在关闭态本来就照常回显（只读诊断面不是"集成行为"），
         //   而这里连桌面端 IPC 都不碰，只是一次本地只读查询。
         sessionList: readSessionList(),
+        // ★ 2026-11-08：桌面端**任务清单**（只读，来自 `automations` 表；`name` 就是标题）。
+        //   默认只列活行（`deleted_at IS NULL`）；失败面与 `sessionList` 同款纪律：`ok:false + reason`，
+        //   不抛错、不用空数组冒充「没有任务」，也不让整个路由失败。
+        taskList: readTaskList(),
         inFlight: runtime.inFlight(),
         lastRun: runtime.lastRun(),
         // ★ 只读账号确认面：插件识别到的现役账号 id 与证据来源。

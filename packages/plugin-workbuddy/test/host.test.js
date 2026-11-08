@@ -659,7 +659,7 @@ test('判据① + ⑤：ON（已装）⇒ 注册四工具；每定义含 output.
       'account', 'balance', 'cdp', 'checkin', 'checkinCredits', 'config', 'conversations', 'cost', 'count',
       'credits', 'creditsRemain', 'distinction', 'effort', 'error', 'ignition', 'inFlight',
       'lastRun', 'message', 'models', 'modelsSource', 'permission', 'probe',
-      'registrationError', 'registry', 'section', 'sessions', 'supportedSections',
+      'registrationError', 'registry', 'section', 'sessions', 'supportedSections', 'tasks',
     ],
     '★ C 组登记：`registrationError` —— DEGRADED 的注册期成因必须可读出（与状态路由面同字段）',
   );
