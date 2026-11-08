@@ -1,0 +1,41 @@
+# dsh-plugin-qoder — 把本机 Qoder CN 桌面端暴露为模型可见的 dsh 工具。
+#
+# 【patch 语义铁律】"A patch replaces the targeted row's whole `config` rather than merging into it"
+# ⇒ 本文件【只 insert 自己的行】，不覆写任何既有行。
+#
+# 【通道】CDP --remote-debugging-port=9333 + 页面 JS 桥 window.qoderDesktop.applicationInvoke
+# （submitRich/readHistory/listChatModels/catalog.list）。零反代、零 CLI、零 GUI 自动化。
+# 事实出处：04-docs/qoder/14-对齐总评估与技术方案.md、15-真机点火实验记录-20261031.md。
+
+- insert:
+    - id: dsh-plugin-qoder
+      name: 'dsh-plugin-qoder'
+      config:
+        enabled: false
+        # Qoder CDP 端口（默认 9333；9222 为 WorkBuddy 保留）。
+        cdpPort: 9333
+        # 默认模型 key（'' = 不指定，沿用会话/服务端默认）。
+        model: ''
+        # 思考强度（'' = 不指定；仅在目标模型 efforts 含该档时下发；入参待验，unknown 时不伪造）。
+        reasoningEffort: ''
+        # 上下文窗口（0 = 不指定；仅在模型 availableContextWindows 含该档时下发）。
+        contextWindow: 0
+        # 默认工作目录（'' = 不指定；新会话需配合 workspace 选择，见 UI）。
+        workspace: ''
+        # 绑定的 Qoder workspaceId（'' = 自动/按 cwd 推断；推断失败则如实报错）。
+        workspaceId: ''
+        # 用户显式绑定的会话 id（UUID；'' = 没绑）。绑定后优先下发到这一条。
+        boundSessionId: ''
+        # Qoder 桌面端 endpointId 缓存（'' = 运行时从 system.describe 读取）。
+        endpointId: ''
+        # 单轮等待上限（毫秒；超时不解除任务，只如实回传在途态）。
+        waitTimeoutMs: 900000
+        # 会话映射落盘位（插件自行写入）。
+        sessions: {}
+        # 签到/积分（CN）：PAT 只存掩码元数据于公开设置；真实 PAT 在本机 vault（DSH_HOME）。
+        # 这里仅保留"是否已配置"的派生状态由运行时计算，不存凭据。
+        signin: {}
+        # 档位/能力数据表（数据，不是旗标；真实消费者 = 状态路由）。
+        launch:
+          effortValues: {}
+          contextWindowValues: {}

@@ -4,11 +4,11 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成**团队里看得见、�
 
 > **项目最高准则：[CHARTER.md](./CHARTER.md)** —— 2026-10-15 项目定义更新：dsh 作为大脑，向本机桌面 harness 下发可视化任务（八步流程：创建对话 → 工作目录 → 模型 → 思考强度 → 下发 → 会话复用 → 回执 → 审批）。凡本仓库文档与该准则冲突处，以 CHARTER 为准，并登记待修。
 >
-> 一 harness 一包：`packages/plugin-workbuddy`（WorkBuddy 桌面端，下文能力面以它为准）与
-> `packages/plugin-opencode`（OpenCode 桌面端，2026-10-15 落地，见包内 README）。
-> **路线图：WorkBuddy ✓ · OpenCode ✓ · Qoder 进行中**（Qoder 调研见 `04-docs/qoder/`，实现另立任务）。
-> 设置页里两者由 `packages/plugin-harness-hub` 合并为**「Harness 接入」父条目**下的两个标签页
-> （各卡抬头是运行态**状态标签**：未开启 / 未启动 / 工作中 / 任务下发中…）。
+> 一 harness 一包：`packages/plugin-workbuddy`（WorkBuddy）、`packages/plugin-opencode`（OpenCode）与
+> `packages/plugin-qoder`（Qoder CN，0.1.0；CDP+`applicationInvoke`，见包内 README）。
+> **路线图：WorkBuddy ✓ · OpenCode ✓ · Qoder ✓（0.1.0，CN 首版）**（调研/契约见 `04-docs/qoder/`）。
+> 设置页里三者由 `packages/plugin-harness-hub` 合并为**「Harness 接入」父条目**下的标签页
+> （WorkBuddy / OpenCode / Qoder；各卡抬头是运行态**状态标签**）。
 
 ---
 
@@ -36,6 +36,8 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成**团队里看得见、�
 
 OpenCode 侧同款能力：创建 / 复用**可见会话**、下发、等待回执、审批列待批 + 回复、精准清理 ——
 工具名与用法见 [`packages/plugin-opencode/README.md`](./packages/plugin-opencode/README.md)。
+
+Qoder CN 侧（0.1.0）：经 CDP（`--remote-debugging-port=9333`）+ `window.qoderDesktop.applicationInvoke` 创建/复用可见会话、下发、`readHistory` 回执轮询、实机模型/思考/上下文目录（`models.getCatalog`）与 CN 签到积分（PAT→用量/活动/领取）；工具 `qoder_run` / `qoder_status`，状态路由 `/plugin-qoder/status`（loopback-only）。**无**计划任务列表/删除（`scheduled_tasks=0`）；审批接力/`reasoningEffort` submit 入参/权限字面量未验证按 `unknown` 上报。详见 [`packages/plugin-qoder/README.md`](./packages/plugin-qoder/README.md)。
 
 ---
 
@@ -106,10 +108,10 @@ node -v                 # 确认 >= 22.5.0
 npm run link:dsh-deps
 ```
 
-② **把三个包装载进你的 DshAgentHub profile**（`dsh-plugin-workbuddy` / `dsh-plugin-opencode` /
+② **把四个包装载进你的 DshAgentHub profile**（`dsh-plugin-workbuddy` / `dsh-plugin-opencode` / `dsh-plugin-qoder` /
 `dsh-plugin-harness-hub`）：
 
-- profile 的 `package.json`：把三个包加入 `dependencies`，并把它们加入 **bundles 装载清单**；
+- profile 的 `package.json`：把四个包加入 `dependencies`，并把它们加入 **bundles 装载清单**；
 - profile 的 `node_modules/`：为每个包建 **junction** 指向本仓库对应 `packages/plugin-*` 目录
   （本机示例：`%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-plugin-opencode`
   → `…\DshAgentHub\packages\plugin-opencode`）；
@@ -125,7 +127,7 @@ npm run link:dsh-deps
 
 ## 使用
 
-两个 harness 都以 **DshAgentHub 的智能体团队成员**形态接入（v0.5.0 起）：挂载了智能团队的组合里，工具面（WorkBuddy：`workbuddy_*`；OpenCode：`opencode_*`）只对**名为 `workbuddy` / `opencode` 的成员**可见——主控模型经 `spawn_teammate` → `send_message` → `wait_agent` 完成委派，成员在团队面板可见、其会话可点开（工作仍真实落在各自桌面端）。未挂团队的组合自动回退为全局工具的旧形态。旧子代理通道（`workbuddy_subagent`）已于 v0.5.1 删除——委派只有成员这一条形态。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
+各 harness 以 **DshAgentHub 的智能体团队成员**形态接入：挂载了智能团队的组合里，工具面（WorkBuddy：`workbuddy_*`；OpenCode：`opencode_*`；Qoder：`qoder_*`）只对对应成员（`workbuddy` / `opencode` / `qoder`）可见——主控模型经 `spawn_teammate` → `send_message` → `wait_agent` 完成委派，成员在团队面板可见、其会话可点开（工作仍真实落在各自桌面端）。未挂团队的组合自动回退为全局工具形态。总开关决定是否启用：关则零下发，不往桌面端写任何东西。
 
 ---
 
@@ -164,6 +166,17 @@ $s = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-workbuddy/status"
 `modelsSource` 以 `desktop-live:` 开头表示目录与倍率来自桌面端实时接口；以 `desktop-cache:` 开头表示已回落到本地缓存，目录可能偏少、倍率可能过期。
 
 积分只在这个接口的 `credits` 字段里，`workbuddy_status` 工具输出里没有——在成员回执里找不到积分不是问题。
+
+Qoder CN 侧同一套（同样只接受本机请求，只读；需 Qoder 以 CDP 9333 运行）：
+
+```powershell
+$sq = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-qoder/status").Content | ConvertFrom-Json
+
+"registry        = $($sq.registry)"
+"probe.reason    = $($sq.probe.reason)"
+"models.count    = $($sq.models.Count)"
+"scheduledTasks  = $($sq.scheduledTasks.count)"   # 恒为 0（Qoder 无计划任务）
+```
 
 OpenCode 侧同一套（同样只接受本机请求，只读）：
 
@@ -213,6 +226,14 @@ $s2 = (Invoke-WebRequest -UseBasicParsing -Uri "$DSH_WEB/plugin-opencode/status"
 - **服务不在 ⇒ 如实报 `service_missing`**（含查过哪些路径的证据清单）；插件**不代启停** OpenCode 桌面端，人去开。
 - **审批：面已通、真实闭环待验** —— 列待批 + 回复决定两端已实测（含 404 归因修复）；「真实 tool-call 触发问询 → 回复 → 续跑」整链待真实场景触发。
 - **wait 超时（默认 900000ms，工具侧夹 5s–1h）不中断任务**：只把在途态如实回传；同会话可再附着等结果（**无终态回执 ≠ 已结束**）。桌面端 2.0.29 兼容待验。
+
+### Qoder CN 通道
+
+- **CDP 前置**：Qoder 需以 `--remote-debugging-port=9333` 启动（可由设置卡写入 Startup `.cmd`）；插件**不代启停/重启** Qoder，CDP 不可达时如实报错。
+- **实机表面适配（0.1.0）**：桥返回 `{ok,value|error}`；模型/思考/上下文目录走 `models.getCatalog(fetchStrategy:'cache')`（`listChatModels` 在 0.5.6 实机 `APPLICATION_METHOD_NOT_FOUND`，已兼容）；工作区走 `workspaces.list`。
+- **`scheduled_tasks` 不支持**：Qoder 无计划任务列表/删除，状态与能力面保持 `count=0`。
+- **签到/积分（CN）**：用户粘贴 `pt-` PAT（仅本机 vault，不回显）；global/设备风控未覆盖按 `unknown`/不支持处理。
+- **`unknown` 不编造**：`reasoningEffort` 的 `submitRich` 入参形态、审批接力（八步之 8）、权限字面量待验。
 
 ### 通用
 

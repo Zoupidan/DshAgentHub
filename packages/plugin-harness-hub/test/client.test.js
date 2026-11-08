@@ -26,6 +26,7 @@ const PACKAGE_JSON = JSON.parse(readFileSync(join(PACKAGE_DIR, 'package.json'), 
 const SIBLING_BUNDLES = [
   { path: join(PACKAGE_DIR, '..', 'plugin-workbuddy', 'lib', 'client.js'), tabId: 'workbuddy', tabOrder: 10 },
   { path: join(PACKAGE_DIR, '..', 'plugin-opencode', 'lib', 'client.js'), tabId: 'opencode', tabOrder: 20 },
+  { path: join(PACKAGE_DIR, '..', 'plugin-qoder', 'lib', 'client.js'), tabId: 'qoder', tabOrder: 30 },
 ];
 
 let importNonce = 0;

@@ -355,6 +355,11 @@ const PROBE_TARGETS = {
     export: 'variantCapability',
     call: (mod, cfg) => mod.variantCapability(cfg),
   },
+  'plugin-qoder': {
+    module: ['src', 'host', 'routes', 'status', 'get.js'],
+    export: 'modelCapability',
+    call: (mod, cfg) => mod.modelCapability(cfg),
+  },
 };
 
 /**

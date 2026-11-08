@@ -1,7 +1,7 @@
 # dsh-plugin-harness-hub
 
 设置页里的**父条目**「Harness 接入」：把本机各 harness 的配置卡片收拢成**子标签页**
-（WorkBuddy / OpenCode / 后续接入），设置导航栏从"每个 harness 占一条"变成"一条进全部"。
+（WorkBuddy / OpenCode / Qoder / 后续接入），设置导航栏从"每个 harness 占一条"变成"一条进全部"。
 
 > 一句话：本壳**零能力、零状态、零数据** —— 只做三件事：注册父条目、声明子槽、画标签行。
 > 各 harness 的能力 / 配置 / 状态**一概不经过本壳**（一 harness 一包、互不共享状态的落点）。
@@ -35,7 +35,7 @@ ctx.slots.inject(TAB_SLOT, () =>
 
 - 子侧注册项**不收 `inject`**：壳以 `renderSlot(TAB_SLOT, {}, { only: 标签id })` 渲染，只递空 props；
   配置面（scope）在装配期**闭包**进组件（与 0.1.7 `settings.section` 时代同口径）。
-- 当前标签位：workbuddy=10、opencode=20 ⇒ 标签行顺序 WorkBuddy → OpenCode。
+- 当前标签位：workbuddy=10、opencode=20、qoder=30 ⇒ 标签行顺序 WorkBuddy → OpenCode → Qoder。
 - 子槽必须**先由父的 `children` 表声明**才能注册（未声明即注册会抛 SlotCore 的 "not declared"）；
   父条目不在场 ⇒ 子侧 `inject` 不触发 = 子条目不出现（**父是唯一入口**）。
 
