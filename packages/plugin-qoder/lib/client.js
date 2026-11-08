@@ -151,15 +151,15 @@ window.__ModuleLoader__.load({
       const timerRef = useRef(null);
       const abortRef = useRef(null);
 
-      const snap = scope ? scope.getSnapshot() : { status: 'unavailable', value: {}, writable: false };
-      const [, force] = useState(0);
+      const [snap, setSnap] = useState(() => (scope ? scope.getSnapshot() : { status: 'unavailable', value: {}, writable: false }));
       useEffect(() => {
         if (!scope) return undefined;
-        return scope.subscribe(() => force((n) => n + 1));
+        return scope.subscribe(() => setSnap(scope.getSnapshot()));
       }, [scope]);
 
       const value = (snap && snap.value && typeof snap.value === 'object') ? snap.value : {};
-      const disabled = !scope || snap.writable === false;
+      const writable = snap.status === 'ready' && snap.writable === true;
+      const disabled = !scope || !writable;
 
       async function save(patch) {
         if (!scope || typeof scope.set !== 'function') return;
