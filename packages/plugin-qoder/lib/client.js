@@ -141,7 +141,11 @@ window.__ModuleLoader__.load({
         if (!scope || typeof scope.set !== 'function') return false;
         try {
           setToast('');
-          await scope.set(patch);
+          if (patch && typeof patch === 'object' && !Array.isArray(patch)) {
+            for (const k of Object.keys(patch)) await scope.set(k, patch[k]);
+          } else {
+            return false;
+          }
           return true;
         } catch (e) { setToast(T.fail + errorText(e)); return false; }
       }
