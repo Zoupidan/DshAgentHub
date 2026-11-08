@@ -174,8 +174,8 @@ window.__ModuleLoader__.load({
         const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
         abortRef.current = ac;
         try {
-          const s = await fetchStatus(ROUTE_STATUS, { signal: ac?.signal });
-          setStatus(s); setStatusError('');
+          const s = await fetchJson(ROUTE_STATUS, { signal: ac?.signal });
+          setStatus(s && typeof s === 'object' ? s : null); setStatusError('');
         } catch (e) { if (e?.name !== 'AbortError') setStatusError(errorText(e)); }
       }
 

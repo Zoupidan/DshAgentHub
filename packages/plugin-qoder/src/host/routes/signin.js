@@ -3,7 +3,7 @@
  * @module host/routes/signin
  */
 import { ROUTE_SIGNIN, ROUTE_SIGNOUT, ROUTE_USAGE, ROUTE_CLAIM } from '../../shared/constants.js';
-import { isLoopback, isLoopbackHost } from '../loopback.js';
+import { isLoopback, isLoopbackHost } from './loopback.js';
 import { savePat, clearPat, getCredentialMeta, readPatSecret } from '../signin/credentials.js';
 import { QoderCnSigninClient, QoderSigninError } from '../signin/upstream.js';
 import { redact, oneLine } from '../launch/reason-codes.js';

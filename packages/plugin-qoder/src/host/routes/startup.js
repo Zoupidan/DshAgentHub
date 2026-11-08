@@ -3,7 +3,7 @@
  * @module host/routes/startup
  */
 import { ROUTE_STARTUP } from '../../shared/constants.js';
-import { isLoopback, isLoopbackHost } from '../loopback.js';
+import { isLoopback, isLoopbackHost } from './loopback.js';
 import { applyStartup, inspectStartup, revokeStartup } from '../startup/manager.js';
 
 function sendJson(res, status, payload) {

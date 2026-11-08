@@ -3,7 +3,7 @@
  * @module host/routes/task-delete
  */
 import { ROUTE_TASK_DELETE } from '../../shared/constants.js';
-import { isLoopback, isLoopbackHost } from '../loopback.js';
+import { isLoopback, isLoopbackHost } from './loopback.js';
 
 function sendJson(res, status, payload) {
   try { res.statusCode = status; res.setHeader?.('content-type', 'application/json; charset=utf-8'); res.end(JSON.stringify(payload)); } catch {}
