@@ -24,7 +24,7 @@
  *
  * 约束：本文件属于 packages/*​/src（CI ② 扫描范围）—— 不得出现裸进程出口字样。
  */
-import { statSync, readFileSync } from 'node:fs';
+import { statSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,10 +34,31 @@ let catalogCache = { key: null, value: null };
 
 /**
  * 桌面端刷新的产品配置缓存落点（与 `launch/cost-catalog.js` 的 ③ 号源**同一个路径常量**）。
+ * 支持动态 acc-product-config-v3*.json 文件名（如 PID-uuid 后缀），优先取最新写入的文件。
  * @returns {string}
  */
-export function desktopCachePath(home = homedir()) {
-  return join(home, '.workbuddy', 'cache', 'acc-product-config-v3.json');
+export function desktopCachePath(home = (process.env.WORKBUDDY_HOME || homedir())) {
+  const dir = join(home, '.workbuddy', 'cache');
+  const exact = join(dir, 'acc-product-config-v3.json');
+  if (isFile(exact)) return exact;
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    let best = null;
+    let bestMtime = -1;
+    for (const e of entries) {
+      if (!e.isFile() || !/^acc-product-config-v3.*\.json$/i.test(e.name)) continue;
+      const full = join(dir, e.name);
+      try {
+        const mt = statSync(full).mtimeMs;
+        if (mt > bestMtime) {
+          bestMtime = mt;
+          best = full;
+        }
+      } catch { /* 忽略单个 stat 错误 */ }
+    }
+    if (best !== null) return best;
+  } catch { /* 目录不存在或不可读 */ }
+  return exact;
 }
 
 /**
@@ -114,7 +135,7 @@ export function detectionStateOf(runtime) {
 export function readModelCatalog(probe, env, detection = 'concluded', opts = {}) {
   // ★ `opts.home` 与 `cost-catalog.js` 同款：测试注入后永远指向夹具，不会读到真实用户缓存
   //   （没有注入时读不到机器状态这件事，测试就只能靠"本机恰好装了"来通过 = 假绿）。
-  const cachePath = desktopCachePath(opts.home ?? homedir());
+  const cachePath = desktopCachePath(opts.home ?? process.env.WORKBUDDY_HOME ?? homedir());
   let data = null;
   let sourceRef = null;
   const inline = [env.ACC_PRODUCT_CONFIG_V3, env.ACC_PRODUCT_CONFIG_V2, env.ACC_PRODUCT_CONFIG].find(

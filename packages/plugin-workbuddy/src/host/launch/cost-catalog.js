@@ -37,6 +37,7 @@ import { join } from 'node:path';
 import { normalizeModelCostInfo } from './cost-model-info.js';
 import { PROBE_TARGET } from '../config/constants.js';
 import { isSelectableModel } from './model-filter.js';
+import { desktopCachePath } from './model-catalog.js';
 
 /** @returns {any} */
 function parseJson(text) {
@@ -128,7 +129,7 @@ export function readCostCatalog(probe, env, opts = {}) {
     }
   }
   if (tried.length === 0 || tried.every((t) => t.data === null || t.data === undefined)) {
-    const cachePath = join(opts.home ?? homedir(), '.workbuddy', 'cache', 'acc-product-config-v3.json');
+    const cachePath = desktopCachePath(opts.home ?? process.env.WORKBUDDY_HOME ?? homedir());
     try {
       if (statSync(cachePath).isFile()) tried.push({ label: cachePath, data: parseJson(readFileSync(cachePath, 'utf8')) });
       else tried.push({ label: cachePath, data: null, error: 'not-a-file' });
