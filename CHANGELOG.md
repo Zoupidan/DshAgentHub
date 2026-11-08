@@ -2,6 +2,98 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.6.0] - 2026-11-08
+
+### 本次更新的目的
+
+三点：① `workbuddy_status` 能直接看到桌面端的**真实会话清单（带标题）**；② 下发不再绕计划任务，
+**默认直连 CDP 点火**（计划任务仅作回退）；③ 适配 DSH **`0.2.1-rc.5`** 并同步文档。
+（本次发布同时包含此前未发布的 `0.5.2` / `0.5.3` 改动。）
+
+### 新增（Added）
+
+- **只读会话清单段**（`workbuddy_status` 的 `conversations`）：直读桌面端 `workbuddy.db` 的 `sessions` 表
+  （`readOnly: true`，零写入/零探测），返回每条会话的**标题**（`title` → `custom_title` → `(untitled)`）、
+  创建/更新时间、`active`（是否仍活跃）与 `background`/`model`/`cwd`；默认 `limit: 50`、按 `last_activity_at` 倒序。
+  读不到（库缺失/被锁/旧 schema 缺列）⇒ `ok:false` + `reason`，**绝不用空数组冒充"没有会话"**。
+  状态路由载荷同步新增 `sessionList`，供卡片与诊断消费。
+
+### 变更（Changed）
+
+- **默认直接点火**：`enableDirectIgnition` 默认值改为 `true`（`cordis.patch.yml` 同步）。下发默认经桌面端
+  CDP 建对话并下发（零计划任务 INSERT）；CDP 不可用或派发**前**失败 ⇒ 自动回退计划任务队列
+  （回执带 `fallback` / `fallbackReason`，任务不丢）；`argv_preview` 与 `lastRun.transport` 按**实际**通道如实记录。
+- **文案**：移除 availability 里过期的 "current transport (automation)"，改为"默认直连 + CDP 不可用回退队列"。
+- **兼容性**：`dsh.compatibility.dshReleases` 增加 `0.2.1-rc.5`（root / plugin-workbuddy / plugin-opencode 口径同步）。
+
+### 验证（Verification）
+
+- `npm run ci:redlines` 4/4；`npm run test:host` **663/663**（含新增 `status-session-list`、`dispatch-direct-default`）；
+  `npm run test:client` **166/166**。
+- 本机实测：DSH `0.2.1-rc.5` + WorkBuddy 桌面端 `5.9.3`（CDP 9222 可用）；`conversations` 段实测只读、
+  零网络副作用（库文件哈希前后一致）。
+
+## [0.5.3] - 2026-10-31
+
+### 本次更新的目的
+
+修复 WorkBuddy 桌面端检测断路与动态模型配置缓存不匹配问题：
+1. 解决桌面端运行且 9222 调试端口监听时误判为 "WorkBuddy desktop was not found" 的问题，确保会话正常注入 `workbuddy_run` / `workbuddy_status`；
+2. 解决最新版 WorkBuddy 5.9.3 动态带 PID/UUID 后缀的配置文件（`acc-product-config-v3-*.json`）无法被识别导致设置页报“没有匹配的模型”的问题；
+3. 严格遵循零反代（CHARTER §3）与探测零进程拉起（H-NO-EXEC-PROBE）红线。
+
+### 变更（Changed）
+
+- **WorkBuddy 存活探测升级** (`packages/plugin-workbuddy/src/host/probe/detect.js`)：
+  - 增加 9222 本地回环原生 HTTP CDP 探测（`/json/version`，校验 User-Agent 与 target 特征）；
+  - 设置 100ms 快速超时，严守 `H-NO-EXEC-PROBE` 红线（零子进程拉起）；
+  - 补齐动态 `acc-product-config-v3*.json` 缓存通配扫描；
+  - 存活时挂载 `workbuddy_run` 与 `workbuddy_status`，离线时保留明确的降级提示。
+- **动态缓存目录自适应读取** (`packages/plugin-workbuddy/src/host/launch/model-catalog.js` & `cost-catalog.js`)：
+  - 重构 `desktopCachePath`：由旧有的硬编码静态文件名升级为通配模式扫描，按最新修改时间自动命中现代版本生成的 `acc-product-config-v3-<pid>-<uuid>.json` 文件（本机实测解出 60 款完整模型）；
+  - 接入 `WORKBUDDY_HOME` 测试护栏感知（测试环境与生产真实环境隔离）。
+
+### 验证（Verification）
+
+- 新增 `detect-desktop-cdp.test.js`（50 个测试用例，覆盖存活、降级、拒绝伪造及通配缓存）；
+- `npm run test:host` 640/640 全绿，`npm run ci:redlines` 4/4 全绿，`npm run test:client` 166/166 全绿；
+- 形成正式归档报告 `04-docs/REPORT-20261031-workbuddy-desktop-and-models.md`。
+
+## [0.5.2] - 2026-10-18
+
+### 本次更新的目的
+
+两张设置卡片的状态**自己保持新鲜**：删掉手动「刷新状态」按钮，改为客户端自动刷新 ——
+可见才问、有活勤问、没活懒问；**host 一行未改**（用户明确否决了改 host 的 304 / 后台定时器方案）。
+
+### 变更（Changed）
+
+- **卡片状态自动刷新（A1 · 纯客户端）**：WorkBuddy / OpenCode 两张卡的「刷新状态」按钮与它的操作区整体删除 ——
+  - 事件触发**立即**拉：进入视口（IntersectionObserver，阈值 0）/ 由隐藏变可见 / `visibilitychange` 变可见 /
+    窗口 `focus` / 配置快照变化（总闸、模型、强度…）——最后一条正是"开了总闸却还显示旧状态"的修复；
+  - 可见期间兜底档位：payload `inFlight` 非空 ⇒ **3s**，否则 **15s**，各带 ±15% 抖动（两卡天然错峰）；
+  - **不可见 = 0 请求**：hub 里被隐藏的标签页、页面切到后台、组件卸载，一律停轮询 + abort 在途请求 +
+    清定时器 + 摘监听器；失败照旧如实进文案并按档位重试（不自锁死）。
+  - 两条可见性信号（**在视口** / **页面可见**）分开存、相乘用：修掉"页面切后台再回前台会把
+    '这个标签页仍然隐藏'这一半覆盖掉 ⇒ 隐藏卡片恢复空转"的缺陷（OpenCode 侧交叉审查发现；回归用例
+    A1 ⑤b 钉住，并用"注入缺陷 ⇒ 恰好它变红"的负控证明了判别力）。
+- **文案**：删掉会失效的指引（"再点刷新" → 本卡会自动重拉）。
+
+### 维护（Chore）
+
+- client 测试台补齐：伪 React 的 `useRef` / `unmountAll` / ref 提交、假 timer（模块级接管 + **逐例 reset**，
+  否则前一例残留的轮询链会在后一例 `advance()` 时被一起引爆）、IntersectionObserver 与 focus 桩。
+- 新增 A1 判据组（无按钮/CSS/文案残留、挂载即拉、3s 与 15s 档、隐藏 0 请求、离视口 0 请求、
+  单边覆盖回归、配置变化即拉、focus 即拉 + 卸载清理、失败重试）+ `clearTimeout` 探针（"挡住请求"≠"清掉定时器"）。
+- **独立验收（T3）后的补强**：补"抖动边界""在途请求必须被 abort""无 document 退化"三条判据与产物级
+  `/refresh/i` grep —— 三处原本"注入了缺陷仍全绿"的漏网突变（`jitter-off` / `cleanup-no-abort` /
+  `i18n-refresh-key-back`）现在各自被对应用例**精确判红**；OpenCode 侧修掉测试里的 `Math.random`
+  跨用例泄漏（node:test 对同一属性连调两次 `t.mock.method` 时只还原最后一层的缺陷），两包 `afterEach`
+  各加"替身必须复位"守卫，并在 OpenCode 侧新增一只"不钉随机数"的金丝雀用例。
+- **顺序加固**：快照订阅移到所有 state 声明之后 —— 回调里引用的 `setPollNonce` 不再依赖
+  "`scope.subscribe` 不会同步回调"这一外部约定（T3 指出的潜在 TDZ）。
+- 版本线 —— root / plugin-workbuddy `0.5.2`，plugin-opencode `0.2.1`。
+
 ## [0.5.1] - 2026-10-17
 
 ### 收编（Consolidated）

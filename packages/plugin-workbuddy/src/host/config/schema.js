@@ -87,16 +87,22 @@ export const Config = z.object({
   // 次转 9.1s —— 15s 已在冷启动边缘，慢盘/杀软/更长系统提示必然越界，留足 12 倍余量。
   // 超时即回退到点火新会话，绝不让调用方对着转圈的作业干等。
   followupTimeoutMs: z.number().default(180_000).volatile(),
-  // ═══ direct ignition（★ 2026-10-04 新增：计划任务 → CDP 直建）════════════════════
-  // `enableDirectIgnition` = 直接点火**总闸，默认 false**（opt-in，用户拍板 D3）：
+  // ═══ direct ignition（★ 2026-10-04 新增：计划任务 → CDP 直建；★ 2026-11-08 起为**默认路径**）
+  // `enableDirectIgnition` = 直接点火**总闸，默认 true**（2026-11-08 改判：默认直接点火，
+  //   计划任务降为**回退**；原默认 false 是 10-04 首次落地时的 opt-in 保守面）：
   //   开着时，点火轮先走 `dispatcher.ignite()` —— 同一条 CDP 桥把
   //   `create(+model/+title)` → `configSetThoughtLevel`/`configSetPermissionMode`（仅当本轮
   //   请求了对应值）→ `runPrompt` 同步等终态一次走完，**省掉计划任务的调度开销**
-  //   （`INSERT + tick(5s) + 拾取(10~30s) + 完成察觉(0~5s)` ≈ 15s；建会话本身真机 123ms）。
-  //   覆盖 `tools/run.js` 的点火（用户拍板 D2）。
+  //   （`INSERT + tick(5s) + 拾取(10~30s) + 完成察觉(0~5s)` ≈ 15s；建会话本身真机 123ms，
+  //   探针 `tmp/probe-direct-create.mjs`）。覆盖 `tools/run.js` 的点火轮（用户拍板 D2）。
+  // ★ 为什么现在翻默认（依据分级）：直连自 2026-10-04 起已 live-calibrated —— CDP 双证据判别、
+  //   回执形状、三条回退分支都有真机证据与回归测试（`test/followup-dispatcher.test.js` G1–G9 /
+  //   R0–R4），opt-in 的"首跑未知"理由不再成立；而计划任务的调度开销是**每一轮**都在付的账。
+  //   ⇒ 默认走快路，慢路（计划任务）留作回退；显式 `false` 仍可整体退回旧主路（零回归逃生口）。
   // ★ 回退语义（R-NEW-2）：只有**派发前**失败才回退计划任务（`fallback`/`fallbackReason` 两键
   //   如实）；**已派发**的失败一律不回退 —— 回退会把同一条 prompt 再跑一遍（双份积分 + 两条
-  //   对话）。关着时行为与现有计划任务路径逐字节一致（零回归门禁）。
+  //   对话）。最常见的派发前失败就是 CDP 不可用 ⇒ 自动落到计划任务，**任务不丢**。
+  //   关着时行为与现有计划任务路径逐字节一致（零回归门禁）。
   // ★ 前置条件（产品侧要求 D6）：桌面端必须带 `WORKBUDDY_REMOTE_DEBUGGING_PORT` 启动（一次性
   //   用户环境变量即可，**不需要**启动项/自定义快捷方式），且**运行中的实例补不开调试口**——
   //   需要完全退出重启。插件只告知、只询问，绝不代设环境变量、绝不代杀/代重启 WorkBuddy。
@@ -104,7 +110,7 @@ export const Config = z.object({
   //   `fallback`，主控模型**必须**按 `prompts/availability.js` 的约定告知用户并询问是否配置。
   // ★ 复用 `followupCdpPort`（不新增端口 knob）；超时复用计划任务 15min 口径
   //   （`AUTOMATION_DEFAULTS.timeoutMs`，不新增超时 knob）。
-  enableDirectIgnition: z.boolean().default(false).volatile(),
+  enableDirectIgnition: z.boolean().default(true).volatile(),
   // ═══ 每日签到自动领取（★ 2026-10-09 新增：Buddy 加油站）══════════════════════
   // `enableAutoCheckin` = 签到自动领取**总闸，默认 true**（与上面两个 CDP 开关相反）：
   //   开着时，状态面读到"活动进行中且今日未签"会**在后台顺手领掉**（先查后领、领完复核，
@@ -115,9 +121,11 @@ export const Config = z.object({
   //   ★ 前置条件：桌面端在跑且已登录（走 wbipc 借登录态；桌面端没开 ⇒ 如实报读不到，
   //     不弹窗、不代启动 WorkBuddy —— 启动桌面端是 `autoStartDesktop` 那条路的事，不借用）。
   enableAutoCheckin: z.boolean().default(true).volatile(),
-  // ═══ 传输面（★ 2026-10-02 起只有 `automation`）════════════════════
+  // ═══ 传输面（★ 2026-11-08：`automation` 是**回退**传输面，默认主路是上面的 direct ignition）═══
   // `automation` = 往计划任务表写一行 `once`（`startAutomationRun` 唯一写入点），
-  // 等桌面端调度器建会话。`schedule_type='once'`、`next_run_at=now`、`valid_until=+25min`，
+  // 等桌面端调度器建会话。两条进入条件：① `enableDirectIgnition` 被显式关掉（排障/零回归）；
+  // ② 点火轮直连 CDP **派发前**失败（CDP 不可用 / 建会话或设配被拒）⇒ 自动回退到这条路。
+  // `schedule_type='once'`、`next_run_at=now`、`valid_until=+25min`，
   // 附 `model_id` / `permission_mode` / `cwd`；建会话成功立刻 `retireRow` 软删，
   // 任何终态都退役，启动期扫遗留活行全软删（止损就靠删行）。
   // ★ `spawn`（自己拉 CLI）已**整体删除**（2026-10-01）：自 spawn 的 CLI 无登录态、必然

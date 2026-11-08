@@ -200,6 +200,13 @@ function boot(overrides = {}) {
     //   默认指向"当前正在跑测试的这个 node 可执行文件"（真实存在的文件 ⇒ 走 config 分支）。
     nodePath: overrides.nodePath ?? process.execPath,
     launch: { effortValues: { ...EFFORT_VALUES } },
+    followupCdpPort: overrides.followupCdpPort ?? 0,
+    // ★ 2026-11-08（T6）：direct ignition 已翻为 schema 默认 true，但**本假宿主没有 CDP**。
+    //   默认开着会让每条真实 execute 用例先探一次 9222（用户机器上若真有带调试口的 WorkBuddy，
+    //   这条测试会**真的建一条对话**），并把回执变成回退轮（多出 fallback 两键 ⇒ 键集断言红）。
+    //   ⇒ 假宿主显式钉 false（行为 = 翻默认之前的计划任务主路，其余用例逐字不变）：
+    //     默认值与三条回退分支由 `test/dispatch-direct-default.test.js` 用 seam + schema 真值覆盖。
+    enableDirectIgnition: overrides.enableDirectIgnition ?? false,
   };
   state.settingsResolved = mods.apply.Config['~standard'].validate(entry).value;
   state.settingsSection = { ...entry };
@@ -647,7 +654,9 @@ test('判据① + ⑤：ON（已装）⇒ 注册四工具；每定义含 output.
       //   `error` / `message` / `supportedSections`（invalid_section 兜底）。同时**删除**
       //   曾把键集钉在 16 键上的 ownKeys Proxy（它让 balance/creditsRemain 对宿主校验器
       //   不可见）。键集 = 实际会出现的全部键，additionalProperties:false 继续成立。
-      'account', 'balance', 'cdp', 'checkin', 'checkinCredits', 'config', 'cost', 'count',
+      // ★ 2026-11-08（T5）：新增 `conversations` —— 桌面端**真实**会话清单（带标题/时间/活跃），
+      //   与插件自己的 `sessions` 记忆是两回事；段名同时进 section 枚举。
+      'account', 'balance', 'cdp', 'checkin', 'checkinCredits', 'config', 'conversations', 'cost', 'count',
       'credits', 'creditsRemain', 'distinction', 'effort', 'error', 'ignition', 'inFlight',
       'lastRun', 'message', 'models', 'modelsSource', 'permission', 'probe',
       'registrationError', 'registry', 'section', 'sessions', 'supportedSections',
@@ -1074,6 +1083,10 @@ test('Config schema：默认 OFF + model/effort 空串（不发明默认）；la
   assert.equal(resolved.enabled, false);
   assert.equal(resolved.model, '');
   assert.equal(resolved.effort, '');
+  // ★ 2026-11-08（T6）：直接点火翻为**默认路径** —— 这两行是默认值的机器证据（改回 opt-in 会在此变红）；
+  //   `transport` 仍是回退队列的名字（automation），不是"当前唯一主路"。
+  assert.equal(resolved.enableDirectIgnition, true, '★ 默认直接点火（CDP 直建），计划任务仅作回退');
+  assert.equal(resolved.transport, 'automation', 'transport 字段保留为回退队列名（不是默认路径声明）');
   assert.deepEqual(resolved.sessions, {}, 'T04：会话映射默认空表');
   assert.deepEqual(resolved.launch.effortValues, {}, '档位表是数据（补丁/用户层提供），不硬编码进 schema');
   // ★ 2026-10-02：CLI 线整体删除 ⇒ 这两个键**必须不在 schema 里**。
@@ -1693,8 +1706,8 @@ test('availability 文案：可用分支追加当前 model/effort + 逐次覆盖
   assert.match(onText, /WorkBuddy · /, '★ 描述必须以产品名打头（成员行渲染成 "[x] WorkBuddy — …" 会把产品名挤到中间）');
   assert.match(
     onText,
-    /On the current transport \(automation\) every round opens a new WorkBuddy conversation/,
-    '★ 默认传输面是 automation，每轮都是新对话、session_key 只归组不带记性',
+    /Every round opens a new WorkBuddy conversation through the automation queue/,
+    '★ 假宿主钉了 enableDirectIgnition:false（见 boot 注释）⇒ 文案走"计划任务队列"分支；每轮新对话、session_key 只归组不带记性',
   );
 
   // ② 空配置 ⇒ 明确说"未设置 ⇒ 由桌面端用自身默认"（不得编造取值）
@@ -1720,14 +1733,12 @@ test('availability 文案：可用分支追加当前 model/effort + 逐次覆盖
     registry: () => mods.constants.REGISTRY_STATES.REGISTERED,
   };
   const stubText = mods.availability.availabilityText(stub);
-  // ★ 2026-10-01 作废：旧断言 `Pass session_key to group related runs` 已删。
-  //   理由：那句在默认传输面（automation）上是**假的** —— `automations` 表没有会话 id 列，
-  //   调度器只按行新建，`session_key` 不携带任何对话记忆。
-  //   现在由 `continuityHint(runtime)` 按**当前 transport** 分别给出两说，而读不到配置时
-  //   一律不说（与 `overrideHint` 同一个"绝不猜"纪律）。
+  // ★ 2026-11-08：旧标签 "On the current transport (automation)" 已随"直连成为默认"作废
+  //   （它是句过期标签，不是事实）；现在按"每轮新对话"这句**仍然为真的事实**断言。
+  //   continuityHint 仍按**当前传输面**分说，读不到配置时一律不说（与 `overrideHint` 同一个"绝不猜"纪律）。
   assert.doesNotMatch(
     stubText,
-    /On the current transport/,
+    /Every round opens a new WorkBuddy conversation/,
     '读不到 transport 就不能断言会话连不连续（绝不猜），哪怕旧文案曾经无条件这么说',
   );
   assert.doesNotMatch(stubText, /Current defaults/, '读不到实时配置 ⇒ 不加这段（绝不猜）');
@@ -1741,16 +1752,27 @@ test('availability 文案：可用分支追加当前 model/effort + 逐次覆盖
   });
   assert.doesNotMatch(notInstalled, /Current defaults/);
 
-  // ★ 计划任务主路下 session_key **只归组、不带记性** ⇒ 每轮都是新对话，措辞必须如实。
-  //   不按 transport 分支就是在其中一条路上撒谎，且是最难察觉的那种（结果都对，只是不连着）。
+  // ★ 2026-11-08（T6）：**缺省配置**（不写 enableDirectIgnition ⇒ schema 默认 true）⇒ 文案必须说
+  //   "默认直连；CDP 不可用则回退自动化队列"，且每轮仍是新对话、session_key 只归组。
+  //   这条用裸 runtime（不经 boot 的钉死项）单独读，才能真正覆盖 schema 默认值。
   const autoText = mods.availability.availabilityText({
     detected: () => ({ installed: true }),
     registry: () => mods.constants.REGISTRY_STATES.REGISTERED,
     currentConfig: () => ({ transport: 'automation', model: '', effort: '' }),
   });
-  assert.match(autoText, /On the current transport \(automation\)/, 'automation 下每轮都是新对话');
-  assert.match(autoText, /every round opens a new/, 'automation 下必须说每轮新会话');
-  assert.doesNotMatch(autoText, /binds one WorkBuddy conversation/, 'automation 下不得说绑定一条对话');
+  assert.match(autoText, /Every round opens a new WorkBuddy conversation/, '缺省下每轮都是新对话');
+  assert.match(autoText, /created directly over CDP by default/, '★ 必须说直连是默认（旧文案把 automation 说成当前传输面，已过期）');
+  assert.match(autoText, /falls back to the automation queue/, '★ 必须说 CDP 不可用时自动回退计划任务（任务不丢）');
+  assert.doesNotMatch(autoText, /On the current transport \(automation\)/, '★ 过期标签不得复活（直连已不是 opt-in）');
+  assert.doesNotMatch(autoText, /binds one WorkBuddy conversation/, '不得说绑定一条对话');
+  // 负控：显式关掉直连 ⇒ 文案回到"计划任务队列"口径（不谎称直连）。
+  const queueOnlyText = mods.availability.availabilityText({
+    detected: () => ({ installed: true }),
+    registry: () => mods.constants.REGISTRY_STATES.REGISTERED,
+    currentConfig: () => ({ transport: 'automation', model: '', effort: '', enableDirectIgnition: false }),
+  });
+  assert.match(queueOnlyText, /through the automation queue/, '显式关直连 ⇒ 说清走计划任务队列');
+  assert.doesNotMatch(queueOnlyText, /created directly over CDP by default/, '关掉直连就不得说直连是默认路径');
   // 委派面在**每一条**传输面上都必须被点名（它是"这件事在不在列表里可见"的那一面）。
   // ★ 2026-10-02：由 `subagent tool` 改为智能团队 —— 主理人裁决二选一选团队，
   //   且团队成员名（`workbuddy`）是"一眼看出是 WorkBuddy"的唯一强可见度。
@@ -1833,3 +1855,6 @@ test('B1 负控：OFF 期间 spawn 恒零；探测从未启动时"未知乐观�
   assert.ok(registered);
   assert.equal(host.state.spawnCalls.length, 0, '仅注册不 spawn（执行面另有 A4 门）');
 });
+
+export { boot };
+

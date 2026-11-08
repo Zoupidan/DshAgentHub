@@ -35,6 +35,15 @@
  *   在途任务、全部 harness 合计 ≤ 4（dsh 协调）。上文 1394 基线（2026-10-01）在其后的追加
  *   （10-02/10-03/10-04）中未再逐句记账；实测同款组合（可用 + 未固定模型 + 配置可读 + 两个 CDP 总闸关）
  *   2610 → 2767 字符。
+ *
+ * ★ 2026-11-08 默认翻为直连（T6）后重新实测（`node` 直调 `availabilityText`；组合 = 可用 + 未固定模型 +
+ *   配置可读 + `launch.effortValues` 6 档）：
+ *   - 同款"两个 CDP 总闸关"组合 2767 → **2778**（+11 来自 `continuityHint` 改说法；事实一条没删）；
+ *   - **默认配置**（`enableDirectIgnition` / `enableMultiTurnFollowUp` 都取 schema 默认 true）
+ *     = **4897**：多出来的两块是 `cdpIgnitionHint`（总闸默认开 ⇒ 它默认在场）与追发口径的
+ *     `continuityHint` 追加句。
+ *   ⇒ 这是"默认路径变了"的必然代价，不是措辞问题；若日后要压，只能把信息挪到**不每回合付钱**的
+ *     地方（与上文 2026-10-01 的结论同一条路），不能删事实。
  */
 import { REGISTRY_STATES } from '../config/constants.js';
 import { REASON_CODES, REASON_TEXT, isFailureCode } from '../launch/reason-codes.js';
@@ -114,6 +123,9 @@ function modelChoiceHint(model) {
   // ★★ 2026-10-02 切回计划任务主路：`effort` 有承载（`automations.reasoning_effort` 列，随行写库，
   //   由桌面端调度器建会话时带上）。旧文案说"网关无 effort 口、传了必 not_sent"已是过去式，
   //   在当前主路下照旧说就是撒谎（run.js buildNotSent 恒为空数组）。
+  //   ★ 2026-11-08：直连成为默认 ⇒ `effort` 在直连轮进 `configSetThoughtLevel`，只有回退轮
+  //   才走 `automations.reasoning_effort`。两种承载都直达桌面端，所以下面那句只讲"随轮回下发"、
+  //   不再把承载固定在某一列上（固定在计划任务行上就是对着默认主路撒谎）。
   //   ⇒ 改成如实告诉模型：思考深度**靠选模型**与**传 effort**共同表达，两条都直达桌面端。
   // ★★ 模型兜底与 run.js 同口径（`awaitModelId` → `cheapestModelId`）：没人选时 dsh 按倍率挑最便宜的，
   //   只有目录读不到才落到桌面端默认。说"落到桌面端默认（快速）"已是过去式，照旧说就是撒谎。
@@ -121,8 +133,8 @@ function modelChoiceHint(model) {
     + 'this run (read back lastRun.model to see which one) — only when the catalog cannot be read does '
     + 'the run fall back to the desktop default. Ids are in '
     + 'workbuddy_run\'s model parameter: read the task, judge its difficulty, pass the fitting id every time. '
-    + 'Reasoning effort goes the same way: pass effort per run (it is written to the scheduled-task row '
-    + 'and carried by the desktop scheduler).';
+    + 'Reasoning effort goes the same way: pass effort per run (direct ignition applies it to the new '
+    + 'conversation; a round that falls back to the desktop queue carries it on the scheduled-task row).';
 }
 
 /**
@@ -158,8 +170,9 @@ function overrideHint(runtime) {
   const model = typeof cfg?.model === 'string' && cfg.model !== '' ? cfg.model : '';
   const effort = typeof cfg?.effort === 'string' && cfg.effort !== '' ? cfg.effort : '';
   const described = (v) => (v === '' ? 'not set (the desktop uses its own default)' : `"${v}"`);
-  // ★ 计划任务主路下 `model` 与 `effort` 都有承载（前者进 `model_id`，后者进 `reasoning_effort`，
-  //   均随行写库由调度器带上）。与 run.js buildNotSent（恒为空数组）同口径：此处邀约两者 per run。
+  // ★ 两条点火路下 `model` 与 `effort` 都有承载：直连轮 model 是 `create(+model)`、effort 是
+  //   `configSetThoughtLevel`；回退轮前者进 `model_id`、后者进 `reasoning_effort`（随行写库，
+  //   由调度器带上）。与 run.js buildNotSent（恒为空数组）同口径：此处邀约两者 per run。
   //   「Current defaults」里照实显示两者生效值（那是配置陈述，不是能力邀约）。
   return ` Current defaults: model ${described(model)}, effort ${effortDescription(cfg, effort)}; `
     + 'workbuddy_run accepts model / effort per run (workbuddy_status lists them).'
@@ -289,25 +302,19 @@ function subagentRouteHint() {
 }
 
 /**
- * 会话连续性的**传输面相关**说明（★ 2026-10-01 新增）。
+ * 会话连续性的**传输面相关**说明（★ 2026-10-01 新增；★ 2026-11-08 默认直连后改说法）。
  *
- * ★ 为什么按 `transport` 分支，而不是一句话说完 ★
- * 默认传输面（`automation`，桌面端自建会话）里 `automations` 表**没有会话 id 列**，
- * 调度器只按行新建 ⇒ 每一轮都是一条新对话，`session_key` 只是个归组用的键，不带记性。
- * 而 `gateway` 传输面恰恰相反：它按 `sessionKey` 绑定既有会话，**有**连续性。
- * 不看配置就下结论，等于在其中一条路上撒谎 —— 而且是用户最难察觉的那种（结果都对，只是不连着）。
+ * ★ 为什么按传输面分支，而不是一句话说完 ★
+ * 两条点火路（默认的 direct ignition 直建 / 回退的计划任务）**每轮都新建一条对话** ⇒
+ * `session_key` 只是归组用的键，跨轮不带记性。这条事实没变，**变的只是哪条路是默认**：
+ * 旧文案把它挂在 "current transport (automation)" 上，而 2026-11-08 起默认传输面是 CDP 直连
+ * （automation 只在 CDP 不可用/显式关掉直连时出现）—— 照旧说就是把一条**大多数轮不再走**的路
+ * 当成当前路，还会让模型以为回退是常态。现在：主句只讲仍然为真的事实（每轮新对话、
+ * session_key 只归组），两条路的归属按 `enableDirectIgnition` 如实分说；残留 `gateway`
+ * 配置仍单独说"已下线"（不再描述它的会话语义 —— 说成现在式就是撒谎）。
  *
- * ★ 2026-10-01 长度收敛（automation 300 → 194 / gateway 147 → 143）：automation 三条事实（每轮新会话 /
- *   `session_key` 只归组、跨轮不带记性 / 要主动告诉用户）与 gateway 两条（`session_key` 绑定一个会话 /
- *   同键重复下发接着该会话）一条没删，分支条件、默认值（缺 `transport` ⇒ automation）、
- *   以及"读不到配置就一个字都不说"全部未动。automation 那句原本 226 字符（**超 200**），现在 152。
- *   "in the WorkBuddy desktop" ⇒ "there"（桌面已由 `subagentRouteHint` 在同段首次点名）。
- *   "only groups **related runs under one key for bookkeeping**" ⇒ "only groups runs"（"归组用于记账"
- *   就是"不带记性"的同一件事说了两遍，留后者）。
- *   "it does NOT carry conversation memory across rounds" ⇒ "carries NO memory across rounds"（去系动词）。
- *   "Say so when the user expects a follow-up to remember **the previous round**" ⇒
- *   "Say so when a follow-up should remember"（末句限定词是冗余修饰，不改所指）。
- *   gateway 分支 "under the same key" ⇒ "under it"（same key 就是前句的 the key）。
+ * ★ 长度：base 两句（每轮新对话 / 只归组+无记性）与旧 automation 分支同量级；
+ *   总闸关掉时仍只说一条路。2026-10-01 的收敛口径（两条事实一条不删）沿用。
  *
  * @param {object} runtime
  * @returns {string} 前置空格的句子；读不到配置时为 `''`
@@ -318,6 +325,8 @@ function subagentRouteHint() {
  * <p>本节纪律（与 `continuityHint` 同款）：**纯函数、只读配置、不探网** —— 实况由
  * `workbuddy_status` 的 `cdp` / `ignition` 两块承载，这里只把"依赖什么、什么时候必须问、
  * 什么绝对不许做"写进提示词。两个总闸都关 ⇒ 返回空串（零膨胀：不需要 CDP 的机器一个字都不多说）。
+ * ★ 2026-11-08：direct ignition 已翻为**默认** ⇒ 默认配置下这一块**在场**，所以它必须把
+ *   "CDP 没开也照样能干活（自动回退计划任务）" 说清楚，不能读起来像"不配好就不能用"。
  *
  * <p>D6 ④ 的四条禁令逐字在场：**禁止静默回退、禁止谎称走 direct、禁止插件代设环境变量、
  * 禁止代杀/代重启 WorkBuddy**（插件只告知、只询问）。
@@ -329,18 +338,21 @@ function cdpIgnitionHint(runtime) {
   if (runtime === null || typeof runtime !== 'object' || typeof runtime.currentConfig !== 'function') return '';
   let cfg;
   try { cfg = runtime.currentConfig(); } catch { return ''; }
-  const directOn = cfg?.enableDirectIgnition === true;
+  const directOn = cfg?.enableDirectIgnition !== false;   // 缺省 = 默认开（2026-11-08 起）
   const followUpOn = cfg?.enableMultiTurnFollowUp === true;
   if (!directOn && !followUpOn) return '';   // 没有面依赖 CDP ⇒ 不说话
   const portRaw = Number(cfg?.followupCdpPort);
   const port = Number.isFinite(portRaw) && portRaw > 0 ? portRaw : 9222;
-  const faces = [directOn ? 'direct ignition' : '', followUpOn ? 'multi-turn follow-up' : '']
-    .filter((s) => s !== '')
-    .join(' and ');
+  const faceNames = [directOn ? 'direct ignition (the default path)' : '', followUpOn ? 'multi-turn follow-up' : '']
+    .filter((s) => s !== '');
+  const faces = faceNames.join(' and ');
 
-  return ` NOTE: ${faces} depends on the desktop's CDP endpoint: WorkBuddy must be started with the `
+  return ` NOTE: ${faces} ${faceNames.length > 1 ? 'depend' : 'depends'} on the desktop's CDP endpoint: `
+    + `WorkBuddy must be started with the `
     + `user-level environment variable WORKBUDDY_REMOTE_DEBUGGING_PORT=${port} and then FULLY quit and `
-    + 'relaunched — a running instance cannot gain the port. This plugin only informs and asks: it never '
+    + 'relaunched — a running instance cannot gain the port. Without it the round still runs: ignition '
+    + 'falls back to the automation queue (the task is not lost, only delayed). This plugin only informs and '
+    + 'asks: it never '
     + 'sets env vars, never restarts or kills WorkBuddy, never falls back silently, and never '
     + 'claims direct mode it did not verify. Call workbuddy_status and read its `cdp` and `ignition` '
     + 'blocks first, then ASK THE USER (do not assume and do not work around it) whenever any of these '
@@ -359,15 +371,22 @@ function continuityHint(runtime) {
   } catch {
     return '';
   }
-  // ★ 缺省必须跟 `schema.js` / `cordis.patch.yml` 的默认值一致（2026-10-02 切回 automation）。
-  //   旧默认曾写成 `gateway`，而传输面已切回 `automation`（`tools/run.js` 的
-  //   `const transport = 'automation'`，gateway 已下线）。
-  //   配置里 `transport` 为空时，这一句必须说"每轮新会话、session_key 只归组" ——
-  //   `automations` 表无对话列，调度器只按行新建，这是当前主路的真实语义。
+  // ★ 缺省必须跟 `schema.js` / `cordis.patch.yml` 的默认值一致：
+  //   缺 `enableDirectIgnition` ⇒ 视为**默认开**（2026-11-08 起 schema 默认 true）；
+  //   显式 `false` ⇒ 走计划任务主路（排障/零回归）。
+  //   缺 `transport` ⇒ 'automation'（transport 字段现在只描述**回退队列**；gateway 已下线）。
+  const directOn = cfg?.enableDirectIgnition !== false;
   const transport = typeof cfg?.transport === 'string' && cfg.transport !== '' ? cfg.transport : 'automation';
   if (transport === 'automation') {
-    const base = ' On the current transport (automation) every round opens a new WorkBuddy conversation there, so '
-      + 'a session_key only groups runs and carries NO memory across rounds. Say so when a follow-up should remember.';
+    // ★ 2026-11-08：不再把事实挂在 "current transport (automation)" 这个标签上 ——
+    //   直连是默认，automation 只是回退；标签过期而事实（每轮新对话）仍然为真，就把事实留下、
+    //   把两条路的归属按总闸如实分说。
+    const base = directOn
+      ? ' Every round opens a new WorkBuddy conversation, created directly over CDP by default; if CDP is '
+        + 'unavailable the round falls back to the automation queue instead. A session_key only groups runs '
+        + 'and carries NO memory across rounds. Say so when a follow-up should remember.'
+      : ' Every round opens a new WorkBuddy conversation through the automation queue, so a session_key '
+        + 'only groups runs and carries NO memory across rounds. Say so when a follow-up should remember.';
     // ★ 2026-10-03 会话复用（Track A 追发）：总闸开着 ⇒ "每轮新对话"不再是全称事实。
     //   追加一句（既有句子逐字保留 —— 只加不改是本节纪律），写清追发进同一条对话的**条件**
     //   （记性里为该 session_key 记着可续接对话）与**回执判据**（continuity=same-conversation /
@@ -386,8 +405,12 @@ function continuityHint(runtime) {
   }
   // ★ gateway 路已下线（本机 ACP 不再被生产引用）：配置里残留该值时如实说已下线，
   //   不再描述它的会话语义（"绑定一条对话"已是过去式，说成现在式就是撒谎）。
+  //   ★ 2026-11-08：残留 gateway 配置下还要按 `enableDirectIgnition` 说清现在实际走哪条点火路。
   return ' The gateway transport has been removed. '
-    + 'Runs now go through automation, where every round opens a new conversation.';
+    + (directOn
+      ? 'Runs now go through direct ignition, falling back to automation when CDP is unavailable; '
+        + 'every round opens a new conversation.'
+      : 'Runs now go through the automation queue, where every round opens a new conversation.');
 }
 
 /**

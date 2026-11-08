@@ -24,8 +24,9 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成**团队里看得见、�
 | 下发任务 | 主会话把任务交给名为 `workbuddy` 的团队成员，成员用 `workbuddy_run` 下发；DshAgentHub 作业面板里有一个对应的作业。 |
 | 多轮归组 | 同 `session_key` 可二次下发；默认每轮都是新对话，见下一条。 |
 | 会话复用（多轮追问） | 设置 `enableMultiTurnFollowUp` 开启后：`resume:true` 且记性命中 ⇒ 追发进**同一条对话**继续干（桌面端可见）；追发失败自动回退点火新开，回执与状态卡带 `fallback` 原因。默认关闭。 |
-| 直接点火（免排队） | 设置 `enableDirectIgnition` 开启后（默认关）：点火轮经桌面端 CDP 直接建对话并下发，**零计划任务 INSERT**。派发**前**失败照旧回退自动化队列（回执带 `fallback` / `fallbackReason`，任务不丢）；派发**后**失败**绝不回退**——同一条 prompt 再跑一遍就是双份积分。前置条件见「已知限制」。 |
+| 直接点火（免排队，**默认**） | `enableDirectIgnition` **默认开**：点火轮经桌面端 CDP 直接建对话并下发，**零计划任务 INSERT**。CDP 不可用或派发**前**失败 ⇒ 自动回退计划任务队列（回执带 `fallback` / `fallbackReason`，任务不丢）；派发**后**失败**绝不回退**——同一条 prompt 再跑一遍就是双份积分。前置条件见「已知限制」。 |
 | 模型与推理强度 | 下发时可选模型与推理强度（6 档），都不指定时按最省的兜底，实际用了哪个以回执为准。 |
+| 会话清单（只读） | `workbuddy_status` 的 `conversations` 段直读桌面端库（`readOnly`），列出真实会话的**标题** / 创建与活跃时间 / 是否仍活跃（默认最近 50 条）；读不到就 `ok:false` + 原因，**不用空数组冒充"没有会话"**。状态路由载荷同步带 `sessionList`。 |
 | 每日签到自动领取 | Buddy 加油站每日积分：状态面读到"活动进行中且今日未签"时在后台顺手领掉（先查后领、领完复核，幂等；今日已领/非活动季静默收尾）。开关 `enableAutoCheckin` 默认开，关掉即停。 |
 | 积分只读显示 | 设置卡片上有一行「剩余积分」，只读展示，读不到就明说读不到。 |
 | 启动清理 | 插件启动时回收上一次遗留的下发记录，不留会自己再跑的活任务。 |
@@ -86,7 +87,7 @@ graph TB
 | 条件 | 说明 |
 |---|---|
 | Node.js **≥ 22.5.0** | 见 `package.json` 的 `engines` |
-| DshAgentHub（核心为 DeepSeek Harness / dsh） | 本机已安装；三个插件以 junction 装载进它的 profile（见下） |
+| DshAgentHub（核心为 DeepSeek Harness / dsh） | 本机已安装；三个插件以 junction 装载进它的 profile（见下）。**适配 DSH `0.2.1-rc.5`**（本机实测：红线 4/4 · `test:host` 全绿 · `test:client` 166/166）；更早的 0.2.0-rc.2 起见各包 `dsh.compatibility.dshReleases` |
 | WorkBuddy **桌面端**（用 WorkBuddy 通道时） | **已启动并已登录** —— 插件借用它的登录态，自己不持有任何账号凭据；追发 / 点火另需一次性调试端口配置（见「已知限制」，一次性设好后长期有效） |
 | OpenCode **桌面端**（用 OpenCode 通道时） | **已启动**（v2.0.x）—— 插件经它**自己的本机 HTTP 服务**下发（地址与口令现读 `~/.local/state/opencode/service.json`），不代启停桌面端 |
 

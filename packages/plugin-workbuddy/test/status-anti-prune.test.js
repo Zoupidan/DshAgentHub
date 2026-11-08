@@ -2,8 +2,11 @@
  * 防裁剪与分节过滤回归测试套件 (status-anti-prune.test.js)
  *
  * 验证目标 (R1 - R4):
- * 1. R1 分节选择器 (section): 支持 all / overview / models / credits / sessions / checkin。
+ * 1. R1 分节选择器 (section): 支持 all / overview / models / credits / sessions / conversations / checkin。
  *    每个切片载荷体积严格 <= 2KB (2048 字节)。未知参数提供清晰指导。
+ *    ★ 2026-11-08：`conversations` = 桌面端真实会话清单（只读；工具面新增段，见 launch/session-list.js）。
+ *      它**刻意不套 2KB 预算**（默认最多 50 条带标题清单，`truncated` 标出还有更多）——
+ *      2KB 纪律约束的是"摘要"，不是"清单"；体积由 limit 控制而非切片裁剪。
  * 2. R2 紧凑模式 (compact): models 映射为 { [modelId]: factor } 紧凑字典，43+ 模型体积严格 <= 1KB (1024 字节)。
  * 3. R3 顶层余额 (balance / creditsRemain): 直读 live-credits 服务，显式区分于 checkin 签到积分。
  * 4. R4 防裁剪布局: 核心高频字段坐镇顶层/底层安全边际，中部容纳大对象。
@@ -100,7 +103,7 @@ test('R1: makeStatusTool 声明 parameters 与 output.schema 契约', () => {
   //   ③ 顶层 required 只钉跨分支不变量 balance / creditsRemain（子集切片才能合法）。
   assert.deepEqual(
     tool.output.schema.properties.section.enum,
-    ['all', 'overview', 'models', 'credits', 'sessions', 'checkin'],
+    ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'],
     'section 必须被声明且枚举与实现一致',
   );
   assert.deepEqual(
@@ -116,6 +119,11 @@ test('R1: makeStatusTool 声明 parameters 与 output.schema 契约', () => {
   for (const sliced of ['count', 'credits', 'checkinCredits', 'distinction', 'error', 'message', 'supportedSections']) {
     assert.ok(tool.output.schema.properties[sliced], `切片/兜底分支字段 ${sliced} 必须被声明（additionalProperties:false）`);
   }
+  // ★ 2026-11-08：`conversations` 段必须被声明（json 型；与 lastRun 同款「结构由读取器单处承载」）。
+  assert.ok(
+    tool.output.schema.properties.conversations,
+    'conversations 段必须被声明（additionalProperties:false 之下，未声明的键必被宿主校验打回）',
+  );
 });
 
 test('R1: 未传参 execute({}) 保持 100% 向后兼容与全量字段回显', async () => {
@@ -166,6 +174,7 @@ test('R1: 全部分支载荷（all / all+compact / 五个切片 / invalid_sectio
     ['section=models', { section: 'models' }],
     ['section=credits', { section: 'credits' }],
     ['section=sessions', { section: 'sessions' }],
+    ['section=conversations', { section: 'conversations' }],
     ['section=checkin', { section: 'checkin' }],
     ['invalid_section 兜底', { section: 'no_such_slice' }],
   ];
@@ -201,26 +210,38 @@ test('R1: section=overview 切片过滤且体积严格 <= 2KB', async () => {
 });
 
 test('R1: section=models 切片且 compact 字典体积严格 <= 1KB', async () => {
-  const runtime = createMockRuntime();
-  const credits = createMockCredits();
-  const tool = makeStatusTool(runtime, () => ({}), {}, null, null, null, credits);
+  const origConfig = process.env.ACC_PRODUCT_CONFIG_V3;
+  process.env.ACC_PRODUCT_CONFIG_V3 = JSON.stringify({
+    models: [
+      { id: 'fast-model', name: '快速', credits: 'x0.21' },
+      { id: 'deep-model', name: '极致', credits: 'x1.20' },
+    ],
+  });
+  try {
+    const runtime = createMockRuntime();
+    const credits = createMockCredits();
+    const tool = makeStatusTool(runtime, () => ({}), {}, null, null, null, credits);
 
-  const res = await tool.execute({ section: 'models' });
+    const res = await tool.execute({ section: 'models' });
 
-  assert.equal(res.section, 'models');
-  assert.equal(typeof res.models, 'object');
-  assert.equal(Array.isArray(res.models), false, 'models 切片必须返回字典映射');
-  assert.ok(res.count > 0, '模型总数应大于 0');
+    assert.equal(res.section, 'models');
+    assert.equal(typeof res.models, 'object');
+    assert.equal(Array.isArray(res.models), false, 'models 切片必须返回字典映射');
+    assert.ok(res.count > 0, '模型总数应大于 0');
 
-  // 验证倍率真值解析
-  if ('fast-model' in res.models) assert.equal(res.models['fast-model'], 0.21);
-  if ('deep-model' in res.models) assert.equal(res.models['deep-model'], 1.2);
+    // 验证倍率真值解析
+    if ('fast-model' in res.models) assert.equal(res.models['fast-model'], 0.21);
+    if ('deep-model' in res.models) assert.equal(res.models['deep-model'], 1.2);
 
-  const dictBytes = Buffer.byteLength(JSON.stringify(res.models));
-  assert.ok(dictBytes <= 1024, `models 紧凑字典体积 (${dictBytes} 字节) 必须严格 <= 1024 字节 (1KB)`);
+    const dictBytes = Buffer.byteLength(JSON.stringify(res.models));
+    assert.ok(dictBytes <= 1024, `models 紧凑字典体积 (${dictBytes} 字节) 必须严格 <= 1024 字节 (1KB)`);
 
-  const totalBytes = Buffer.byteLength(JSON.stringify(res, null, 2));
-  assert.ok(totalBytes <= 2048, `models 切片总载荷 (${totalBytes} 字节) 必须严格 <= 2048 字节 (2KB)`);
+    const totalBytes = Buffer.byteLength(JSON.stringify(res, null, 2));
+    assert.ok(totalBytes <= 2048, `models 切片总载荷 (${totalBytes} 字节) 必须严格 <= 2048 字节 (2KB)`);
+  } finally {
+    if (origConfig === undefined) delete process.env.ACC_PRODUCT_CONFIG_V3;
+    else process.env.ACC_PRODUCT_CONFIG_V3 = origConfig;
+  }
 });
 
 test('R1: section=credits 切片且体积严格 <= 2KB', async () => {
@@ -329,7 +350,7 @@ test('R1: 未知参数提供清晰参数指引与宽容回退', async () => {
 
   assert.equal(res.error, 'invalid_section');
   assert.match(res.message, /Unknown section 'non_existent_section'/);
-  assert.deepEqual(res.supportedSections, ['all', 'overview', 'models', 'credits', 'sessions', 'checkin']);
+  assert.deepEqual(res.supportedSections, ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin']);
   assert.equal(res.balance, 50.0);
   assert.equal(res.registry, 'REGISTERED');
 });

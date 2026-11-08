@@ -4,8 +4,12 @@
  * Implements: 02-design/DESIGN-v3.md §3.4.3（全文骨架）/ §4.4.2（最外层短路 A4）/ §4.5（argv 回传 = C3 透明度
  *             与 lastRun 记账）/ §7.4（M2：并发上限 1——本工具侧显式门禁）
  *
- * ★ 传输面现在**只有一条**：`automation` —— 往用户计划任务表写一行 `once` 任务，
- *   等桌面端调度器建会话（`startAutomationRun` 唯一写入点）。
+ * ★ 传输面（★ 2026-11-08 改判）：**默认直接点火（CDP 直建）**，计划任务只作**回退**。
+ *   - 主路：`dispatcher.ignite()` —— `create(+model/+title)` → 设配 → `runPrompt` 同步等终态
+ *     （省掉计划任务 `INSERT + tick + 拾取 + 完成察觉` ≈ 15s 的调度开销；真机建会话 123ms）。
+ *   - 回退：CDP 不可用 / **派发前**失败（建会话或设配被拒）⇒ 照旧 `startAutomationRun`
+ *     （往用户计划任务表写一行 `once`），回执带 `{fallback:true, fallbackReason}` —— **任务不丢**。
+ *     **已派发**的失败一律不回退（R-NEW-2：回退会把同一条 prompt 再跑一遍 = 双份积分）。
  *   - 历史：`spawn`（自拉 CLI）2026-10-01 删除：无登录态、必然 auth_failed，也不是合法数据源。
  *   - `gateway`（本机 ACP 网关）已下线：本文件仅在注释里保留该字符串，不再走 `dispatch.run`，
  *     不再建网关会话、不再调网关任何接口。
@@ -13,10 +17,10 @@
  *     附 `model_id` / `permission_mode` / `cwd`；建会话成功立刻 `retireRow` 软删，
  *     任何终态都退役，启动期扫遗留活行全软删（止损就靠删行）。
  *
- * ★ M2 追加一条 **opt-in** 的追发面（RFC-SESSION-RESUME-INTEGRATION）：`resume:true` +
- *   `enableMultiTurnFollowUp`（默认 false）+ 记性命中时，先尝试把 prompt 追发进**既有**
- *   对话（Track A，`followup/dispatcher.js`）；失败优雅回退到上面那条 automation 主路。
- *   开关关闭（默认）时本文件行为与未接线版本逐字节一致。
+ * ★ M2 追加一条**追发面**（RFC-SESSION-RESUME-INTEGRATION）：`resume:true` +
+ *   `enableMultiTurnFollowUp`（默认 true，2026-10-10 用户拍板翻默认）+ 记性命中时，先尝试把
+ *   prompt 追发进**既有**对话（Track A，`followup/dispatcher.js`）；失败优雅回退到点火
+ *   （direct 或 automation）主路。总闸显式配 `false` 时本文件行为与未接线版本逐字节一致。
  *
  * 形态要点（全部 `实测`，见 §3.4.3 表 + 真机 `dsh-jobs-local/lib/index.js:127-142`）：
  *   - `defineTool` 的 `output.render` 必需（顶层 render ⇒ 定义期 TypeError）；
@@ -181,6 +185,27 @@ function buildNotSent(args, cfg) {
 }
 
 /**
+ * 回执首行（`argv_preview`）—— 这一轮**实际走的是哪条路**，如实写。
+ *
+ * <p>★ 为什么 2026-11-08 要改 ★
+ * `argv_preview` 以前**无条件**用 `automationHeader(...)`，于是 direct 轮 / 追发轮的回执
+ * 首行都写着 `transport=automation`，而同一份发出的 `lastRun.transport` 记的是 `direct` /
+ * `followup` —— **一次下发两个结论**。直连翻成默认后这条尤其刺眼：绝大多数轮走的是直连，
+ * 回执却说自己走的是慢路，模型据此复述给用户就是一句谎（违反"不静默降级"与"回照实"）。
+ *
+ * <p>形状**不变**（`transport=… · model=… · cwd=…`）：既有渲染与解析都按这个形状读，
+ * 变的只有 `transport=` 的取值与 model 的真实所指。`automation`（含回退轮）逐字沿用
+ * `automationHeader`，所以回退轮的 argv_preview 与改造前**逐字节一致**（零回归）。
+ *
+ * @param {{ transport: 'direct'|'followup'|'automation', model?: string, cwd?: string }} o
+ * @returns {string}
+ */
+function receiptHeader({ transport, model = '', cwd = '' }) {
+  if (transport === 'automation') return automationHeader({ model, cwd });
+  return `transport=${transport} · model=${model !== '' ? model : '(desktop default)'} · cwd=${cwd}`;
+}
+
+/**
  * `model` 参数的描述（★ 模型面真实化，2026-09-21；★ 2026-10-01 改指向桌面产品目录）。
  *
  * 为什么把清单**写进**参数描述而不是只说"去查 workbuddy_status"：设置里没配模型时，"谁来选"这件事
@@ -224,19 +249,23 @@ const MODEL_ARG_DESCRIPTION =
  *   M2；总闸 `enableMultiTurnFollowUp` 关闭时**绝不构造**——零网络、零套接字），
  *   测试注入 fake 以断言接线与回退顺序；
  *   `directIgnite` 默认 = **惰性构造**的 `createFollowUpDispatcher(...).ignite`（direct ignition，
- *   2026-10-04；总闸 `enableDirectIgnition` 关闭时**绝不构造**，与 `followUp` 同一条纪律）。
+ *   2026-10-04 新增、2026-11-08 起**默认路径**；总闸 `enableDirectIgnition` 被显式关掉时
+ *   **绝不构造**，与 `followUp` 同一条纪律）。
  */
 export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatch = null, seams = {}) => defineTool({
   name: TOOL_RUN,
   description:
     'Delegate a coding task to WorkBuddy. Runs as a background job: ' +
     'read progress with job_output, cancel with job_kill. ' +
-    'Pass session_key to group related runs under one key (every round inserts one once row via automation '
-    + 'and opens a new visible conversation; success adopts the new id over the remembered one, failure forgets), '
-    + 'or omit it to derive a stable key from the working directory. resume:true requires a recorded session '
-    + 'for session_key (it errors when nothing is recorded); resume:false always starts a NEW session '
-    + '(one INSERT once via automation) even when a session is remembered. Omitting resume = auto: '
-    + 'always starts new via automation, even on a remembered key. ' +
+    'Pass session_key to group related runs under one key, or omit it to derive a stable key from the '
+    + 'working directory. Every round opens a new visible conversation, created directly over CDP by '
+    + 'default; when CDP is unavailable or ignition fails BEFORE dispatch, the round automatically falls '
+    + 'back to the desktop automation queue instead (the receipt then carries fallback/fallbackReason - '
+    + 'the task is never dropped, only delayed). Success adopts the new conversation id over the '
+    + 'remembered one, failure forgets it. resume:true requires a recorded session for session_key (it '
+    + 'errors when nothing is recorded) and, with multi-turn follow-up on, appends the round to that SAME '
+    + 'conversation instead of opening a new one. resume:false always starts a NEW session even when a '
+    + 'session is remembered. Omitting resume = auto: always starts new, even on a remembered key. ' +
     'Model, reasoning effort, tool permission and conversation scope are per-call via model / effort / ' +
     'permission_mode / new_conversation; omitting them uses the ' +
     'plugin settings, and when those are empty too the desktop runs with its own default (delegation still works). ' +
@@ -246,13 +275,15 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
     'omitting them uses the plugin settings, and an empty setting keeps the conversation\'s current state.',
   parameters: {
     prompt: { type: 'string', required: true, description: 'The task to delegate.' },
-    session_key: { type: 'string', description: 'Conversation key for this delegation; every round starts a NEW session via automation (one INSERT once), even on a remembered key — success adopts the new id, failure forgets.' },
+    session_key: { type: 'string', description: 'Conversation key for this delegation; every round starts a NEW session (created directly over CDP by default, falling back to the desktop automation queue when CDP is unavailable), even on a remembered key — success adopts the new id, failure forgets.' },
     resume: {
       type: 'boolean',
       description:
-        'Session intent: omit = auto (always starts new via automation, even on a remembered key); ' +
-        'true = require a recorded session for session_key (errors when none is recorded); ' +
-        'false = start a NEW session even when session_key was used before (one INSERT once via automation).',
+        'Session intent: omit = auto (always starts a new session, even on a remembered key); ' +
+        'true = require a recorded session for session_key (errors when none is recorded) — with ' +
+        'multi-turn follow-up on, the round is appended to that same conversation instead of opening ' +
+        'a new one; ' +
+        'false = start a NEW session even when session_key was used before.',
     },
     cwd: { type: 'string', description: 'Working directory; defaults to the plugin workspace.' },
     model: { type: 'string', description: MODEL_ARG_DESCRIPTION },
@@ -356,13 +387,14 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
         },
         fallback: {
           type: 'boolean',
-          description: 'Present only when the follow-up attempt failed and the run fell back to a ' +
-            'fresh automation session; resumed stays false in that case.',
+          description: 'Present only when the round fell back to the automation queue: either the ' +
+            'follow-up append failed, or direct ignition failed BEFORE dispatch (CDP unavailable / ' +
+            'conversation or config rejected). resumed stays false in that case; the task still runs.',
         },
         fallbackReason: {
           type: 'string',
           description: 'Canonical error fingerprint (RFC §4.2, e.g. ERR_WORKBUDDY_CDP_UNAVAILABLE) ' +
-            'that triggered the fallback; present only alongside fallback:true.',
+            'that triggered the fallback to the automation queue; present only alongside fallback:true.',
         },
         reply: {
           oneOf: [{ type: 'string' }, { type: 'null' }],
@@ -573,40 +605,44 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
       await attemptFollowUp(recorded);
     }
 
-    // ═══ 可二次下发：每轮都走点火 INSERT 一行 once，不再有“已记住就失败”分支 ═══
+    // ═══ 可二次下发：每轮都新开一条可见对话，不再有“已记住就失败”分支 ═══
     //   `sessionStore` 按 `session_key` 记 own 映射（`adopt` 记住、`lookup`/`resumable` 查、
     //   `forget` 回收，均在 `session/map.js`）。职责：调用方只传 `session_key` + `resume`，
-    //   插件管记住/回收；下发只有一路：
+    //   插件管记住/回收；点火有两条路（★ 2026-11-08 起**默认直连**）：
     //   - 每轮（有无记住、resume 省略/true/false、`new_conversation` 真假一律）
-    //     ⇒ 走点火 INSERT 一行 once（`resumed:false`，真下发），建新可见对话。
-    //     成功后点火侧 `adopt(sessionKey, {cliSessionId:新id})` 覆盖记性（旧 id 视为
-    //     superseded 被替代）；终态失败/取消/超时 `forget(sessionKey)`（下轮重建）。
+    //     ⇒ 新建一条可见对话（`resumed:false`，真下发）：默认走 **CDP 直建**
+    //     （`dispatcher.ignite`，零 INSERT）；**派发前**失败或总闸显式关 ⇒ 计划任务
+    //     INSERT 一行 once（回退，任务不丢）。成功后 `adopt(sessionKey, {cliSessionId:新id})`
+    //     覆盖记性（旧 id 视为 superseded 被替代）；终态失败/取消/超时 `forget(sessionKey)`
+    //     （下轮重建）。
     //   - 仅保留 load/点火失败 forget（收口 `forgetOnFail` + 点火侧 `doForget` 双保险，
     //     均幂等）。记性命中不再是失败条件。
     //   - 网关全禁：本文件 `void dispatch`，不调 `continueSession`/`dispatch.run`。
     // `new_conversation` 同视为新开（与 resume:false 同义；可二次下发下每轮都新开，故仅保留读取以显式同义）。
     void (args.new_conversation === true);
-    // 设置里显式绑定的对话在计划任务主路下无意义（调度器只按行新建），仅保留读取以显式忽略。
+    // 设置里显式绑定的对话在两条点火路上都无意义（直建自配 id / 调度器只按行新建），
+    // 仅保留读取以显式忽略。
     void (typeof c.boundSessionId === 'string' ? c.boundSessionId.trim() : '');
     // ★ 网关已禁用：本文件不再调网关任何接口（`dispatch` 仅为兼容保留）。
     void dispatch;
 
-    // ═══ 传输面（每轮新开）：走**计划任务**（每轮唯一写入点 `startAutomationRun`）══════
-    //   ★ 全程禁网关：本分支绝不触 `dispatch`。
-    //   点火参数：`schedule_type='once'`、`next_run_at=now`、`valid_until=+25min`
+    // ═══ 点火要素（两条传输面共用；不另立一套）════════════════════════════════════
+    //   ★ 2026-11-08：默认主路是下面的 direct ignition；`automation` 只在
+    //   `enableDirectIgnition` 显式关闭、或直连**派发前**失败时进入（回退，任务不丢）。
+    //   automation 的参数：`schedule_type='once'`、`next_run_at=now`、`valid_until=+25min`
     //   （`timeoutMs(15min)+grace(10min)`，见 `automation.js`），附 `model_id` /
     //   `permission_mode` / `cwd`。建会话成功立刻 `retireRow` 软删，任何终态都退役，
     //   启动期扫遗留活行全软删 —— 止损就靠删行（软删 `deleted_at`）。
-    const transport = 'automation';
-    void transport;
+    //   ★ 全程禁网关：两条分支都绝不触 `dispatch`。
     const requestedPerm = (typeof args.permission_mode === 'string' && args.permission_mode !== ''
       ? args.permission_mode
       : (typeof c.sessionMode === 'string' && c.sessionMode !== ''
         ? c.sessionMode
         : (typeof c.permissionMode === 'string' && c.permissionMode !== '' ? c.permissionMode : null)));
-    // ★ 推理强度真下发：工具参数 effort → automations.reasoning_effort（经 startAutomationRun 写库，由调度器带上）。
-    //   合法取值以 shared/constants.js EFFORT_LEVELS 为准（与卡片下拉同一来源）；未知值不拦截，由桌面端决定，
-    //   不静默升/降档，也不进 not_sent（buildNotSent 恒为空数组）。
+    // ★ 推理强度真下发：direct 轮进 `configSetThoughtLevel`；回退轮进 `automations.reasoning_effort`
+    //   （经 startAutomationRun 写库，由调度器带上）—— 两条路都有承载，均不进 not_sent。
+    //   合法取值以 shared/constants.js EFFORT_LEVELS 为准（与卡片下拉同一来源）；未知值不拦截，
+    //   由桌面端决定，不静默升/降档，也不进 not_sent（buildNotSent 恒为空数组）。
     const normalizeEffort = (v) => {
       void EFFORT_LEVELS;
       const s = typeof v === 'string' ? v.trim() : '';
@@ -633,17 +669,17 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
       }
       : null;
 
-    // ═══ direct ignition（★ 2026-10-04 施工单：计划任务 → CDP 直建）════════════════════
+    // ═══ direct ignition（★ 2026-10-04 新增：计划任务 → CDP 直建；★ 2026-11-08 起为默认路径）══
     // 触发条件（**两条同时成立**；任一不成立 ⇒ 本块整体跳过，行为与既有路径逐字节一致）：
     //   ① followUpMeta === null（这一轮没走成追发 —— direct 只属于点火轮）
-    //   ② c.enableDirectIgnition === true（总闸，默认 false；关闭时**绝不构造** dispatcher）
+    //   ② c.enableDirectIgnition === true（总闸，**默认 true**；显式关掉时**绝不构造** dispatcher）
     // 点火要素沿用上面算好的 autoCwd / requestedPerm / requestedEffort，不另立一套。
     // 三种结局（★ R-NEW-2 回退红线）：
     //   成功 ⇒ `directMeta`：合成"计划任务**已完成**"造型（无行如实记账，同追发分支口径），
     //         **并 adopt 记性** —— 直建不写 automations 行，记性是下轮追发的唯一入口。
-    //   派发**前**失败 ⇒ `fallbackReason=<码>`：照旧走 `startAutomationRun`（任务不丢），
+    //   派发**前**失败 ⇒ `fallbackReason=<码>`：照旧走 `startAutomationRun`（**任务不丢**），
     //         回执如实带 {fallback:true, fallbackReason}；lastRun.transport 仍是 'automation'
-    //         （这一轮真正跑在计划任务上，不谎称 direct）。
+    //         （这一轮真正跑在计划任务上，不谎称 direct）。最常见的成因就是 CDP 不可用。
     //   派发**后**失败 ⇒ `directFail`：**禁止回退** —— 回退会把同一条 prompt 再跑一遍
     //         （双份积分 + 两条对话）。合成"已失败"作业包，收口按既有口径 forget 记性
     //         （与计划任务超时同形：对话仍在桌面端，只是本轮没拿到回执）。
@@ -892,6 +928,8 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
             // ★ M2：追发轮的 transport 如实记 'followup'（不是 automation —— 它没建行）。
             // ★ 2026-10-04：direct ignition 轮如实记 'direct'（直建成功/直建已派发后失败，
             //   两者都没建行）；**回退轮仍记 'automation'** —— 它这一轮真跑在计划任务上。
+            // ★ 2026-11-08 起 direct 是默认路径 ⇒ 绝大多数轮会记 'direct'；这一行与回执首行
+            //   `argv_preview` 的 transport= 取值**同判据**（receiptTransport），一处下发一个结论。
             transport: followUpMeta !== null
               ? 'followup'
               : ((directMeta !== null || directFail !== null) ? 'direct' : 'automation'),
@@ -989,11 +1027,33 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
     //   · 追发成功：resumed:true + 续用的对话 id + follow_up 元数据（channel/elapsedMs）；
     //   · 点火/回退轮：既有逐字形状（resumed:false、resumed_session_id 空串），仅追发失败时
     //     追加 fallback 两键（指纹码可见，不静默）。开关关闭时不含任何新键（hardening 键集契约）。
+    // ★ 2026-11-08：**首行 `argv_preview` 按实际走的路写**（此前恒用 automationHeader ⇒
+    //   direct/追发轮自称 transport=automation，与 lastRun.transport 打架 = 一次下发两个
+    //   结论）。判据与下面 noteRun 的 transport 三分支同一处，不另立一套；回退轮的字符串
+    //   与改造前逐字节一致（host.test.js 的 `transport=automation` 断言仍成立）。
+    const previewAutomation = () => automationHeader({
+      // 与改造前逐字同形（model 缺省 ⇒ automationHeader 自己渲染 '(desktop default)'）。
+      model: typeof args.model === 'string' ? args.model : c.model,
+      cwd: autoCwd,
+    });
+    const directModelForPreview = typeof args.model === 'string' && args.model !== ''
+      ? args.model
+      : (typeof c.model === 'string' && c.model !== ''
+        ? c.model
+        : (typeof resolvedModelId === 'string' ? resolvedModelId : ''));
+    const receiptTransport = followUpMeta !== null
+      ? 'followup'
+      : ((directMeta !== null || directFail !== null) ? 'direct' : 'automation');
     let finalStarted = followUpMeta !== null
       ? {
         job_id: aJobId,
         session_key: sessionKey,
-        argv_preview: automationHeader({ model: typeof args.model === 'string' ? args.model : c.model, cwd: autoCwd }),
+        // 追发轮：model 的所指是**会话现配**（读不到就明说，不冒充桌面默认）。
+        argv_preview: receiptHeader({
+          transport: receiptTransport,
+          model: followUpMeta.conversationModel ?? '(conversation setting)',
+          cwd: autoCwd,
+        }),
         resumed: true,
         resumed_session_id: followUpMeta.conversationId,
         not_sent: buildNotSent(args, c),
@@ -1008,8 +1068,11 @@ export const makeRunTool = (runtime, sessions, cfg, ctx, credits = null, dispatc
       : {
         job_id: aJobId,
         session_key: sessionKey,
-        argv_preview: automationHeader({ model: typeof args.model === 'string' ? args.model : c.model, cwd: autoCwd }),
-        // ★ 点火轮（含追发失败回退轮）恒为新对话（INSERT 一行 once）：`resumed:false` 逐字保留。
+        argv_preview: receiptTransport === 'direct'
+          ? receiptHeader({ transport: 'direct', model: directModelForPreview, cwd: autoCwd })
+          : previewAutomation(),
+        // ★ 点火轮（含追发失败回退轮）恒为新对话（默认 direct 直建 / 回退 INSERT 一行 once）：
+        //   `resumed:false` 逐字保留。
         resumed: false,
         resumed_session_id: '',
         not_sent: buildNotSent(args, c),

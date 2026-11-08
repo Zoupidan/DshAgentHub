@@ -16,6 +16,9 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { TOOL_STATUS } from '../../shared/constants.js';
 import { readCostCatalog } from '../launch/cost-catalog.js';
 import { readModelCatalog, detectionStateOf } from '../launch/model-catalog.js';
+// ★ 2026-11-08：桌面端**真实**会话清单（带标题）的单一读取口 —— 本工具面的 `conversations` 段与
+//   状态路由的 `sessionList` 字段共用它，两出口不可能给出两份清单（与 model-catalog / cost-catalog 同一条纪律）。
+import { readSessionList } from '../launch/session-list.js';
 import { currentAccountDetection, workbuddyDbPath, loadSqlite } from '../gateway/automation.js';
 import { detectWorkBuddy } from '../probe/detect.js';
 // 档位能力表与状态路由**共用同一函数**（单一来源；此前两处各写一份已漂移）。
@@ -123,14 +126,20 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
     'available models (UI catalog + CLI-supported snapshot), the tool-permission options this conversation ' +
     'accepts (the live values for the run tool\'s permission_mode parameter, plus which one is current), ' +
     'resumable sessions, and in-flight jobs. ' +
+    "Also reports the desktop's REAL conversation list (read-only: titles / times / whether each " +
+    'conversation is still active), read straight from the WorkBuddy SQLite database — this never ' +
+    'writes, never launches anything, and reports ok:false + reason instead of an empty list when the ' +
+    "database cannot be read. Note 'sessions' (this plugin's session memory) and 'conversations' " +
+    '(the desktop list) are two different things. ' +
     'Pass reprobe:true to re-run the read-only detection (it never launches the CLI). ' +
-    "Use section ('all' | 'overview' | 'models' | 'credits' | 'sessions' | 'checkin') to retrieve slices <= 2KB. " +
+    "Use section ('all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'checkin') to retrieve slices " +
+    "(most <= 2KB; 'conversations' is a capped list — check its `truncated` flag for more). " +
     'Use compact:true to receive a compact models multiplier dictionary <= 1KB.',
   parameters: {
     reprobe: { type: 'boolean', description: 'Re-run the read-only CLI detection before reporting.' },
     section: {
       type: 'string',
-      description: "Filter status slice: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'checkin' (defaults to 'all').",
+      description: "Filter status slice: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'checkin' (defaults to 'all').",
     },
     compact: {
       type: 'boolean',
@@ -268,6 +277,13 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
             },
           },
         },
+        // ★ 2026-11-08：桌面端**真实**会话清单（只读）。`json` 型同 lastRun：结构由
+        //   `launch/session-list.js` 的 `readSessionList()` 单处承载（`{ ok, sessions[], count,
+        //   truncated, reason }`），这里不逐字段再写一份契约 —— 两份契约必然漂移。
+        //   与上面的 `sessions` **刻意不同键**：那是本插件的会话记性（key→CLI 会话 id），
+        //   这里是桌面端数据库里的对话（带标题）。同名会把两种语义搅成一份，且形状互斥
+        //   （`sessions` 的 items 要 session_key 等必填字段，桌面清单没有）。
+        conversations: { type: 'json' },
         inFlight: {
           type: 'array',
           items: {
@@ -291,8 +307,8 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
         //   （实测：section:'overview'/'sessions' 报 "value.section is not a declared property"）。
         section: {
           type: 'string',
-          description: "Echoed section name; present only in sliced responses ('overview'|'models'|'credits'|'sessions'|'checkin'), absent for 'all'.",
-          enum: ['all', 'overview', 'models', 'credits', 'sessions', 'checkin'],
+          description: "Echoed section name; present only in sliced responses ('overview'|'models'|'credits'|'sessions'|'conversations'|'checkin'), absent for 'all'.",
+          enum: ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'],
         },
         count: { type: 'integer', description: "Number of models in the compact dictionary; present only in section='models'." },
         credits: { type: 'json', description: "Full credits snapshot (packages/counters); present only in section='credits'." },
@@ -324,7 +340,7 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
       const cdpNeeded = c.enableDirectIgnition === true || c.enableMultiTurnFollowUp === true;
       const cdpProbe = cdpNeeded
         ? await createFollowUpDispatcher({ cdpPort, timeoutMs: HTTP_PROBE_MS }).probeCdp(cdpPort, HTTP_PROBE_MS)
-        : { available: false, reason: 'not-needed (direct ignition and multi-turn follow-up are both off)' };
+        : { available: false, reason: 'not-needed (direct ignition is explicitly off and multi-turn follow-up is off)' };
       const cdp = {
         available: cdpProbe.available === true,
         port: cdpPort,
@@ -332,15 +348,35 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
       };
       // `mode` = **配置意图**（不是本轮实况）——触发条件(1)「mode=direct 而 available=false」才成立；
       // 实况写在 `reason` 里（回退预期逐字写清），避免模型只读 mode 就谎称 direct。
+      //
+      // ★ 2026-11-08（T6 改判后同步）：`enableDirectIgnition` 的 schema 默认值已从 false 改为 **true**
+      //   （默认直接点火；计划任务降为回退）。⇒ 三个分支必须按新默认重排，且：
+      //   · "关" 只可能来自**用户显式设置**（`enableDirectIgnition=false`）——旧文案
+      //     "enableDirectIgnition is off (schema default)" 在新默认下是**假话**（把"默认开"说成"默认关"），
+      //     而且它把成因钉死在一个会变的值上；这里改为"显式关闭"口径，默认值变化不再让文案变假。
+      //   · 生效配置里**没写**该键（undefined）是另一种状态（假宿主 / 老调用方）：既不能说"显式关"，
+      //     也不能擅自当 true 去走直连 —— 如实说"没读到该开关，所以不走直连"，绝不冒充。
+      //   · "开" 分支要如实写出来自默认还是显式开启（不再给模型一个"默认怎么走"的错误暗示）。
+      //   · "开但探不到 CDP" 分支保持既有措辞：**回退预期 + 必须询问用户 + 禁止代设 env/代重启**。
+      const ignitionOff = c.enableDirectIgnition !== true;
+      const explicitlyOff = c.enableDirectIgnition === false;
       const ignition = {
-        mode: c.enableDirectIgnition === true ? 'direct' : 'automation',
-        reason: c.enableDirectIgnition !== true
-          ? 'enableDirectIgnition is off (schema default): rounds go through the automation queue (planned '
-            + 'task), so each round pays the scheduling overhead on top of the model turn.'
+        mode: ignitionOff ? 'automation' : 'direct',
+        reason: ignitionOff
+          ? (explicitlyOff
+            ? 'enableDirectIgnition was explicitly turned off in the plugin settings (enableDirectIgnition=false): '
+              + 'rounds go through the automation queue (planned task), so each round pays the scheduling overhead '
+              + '(insert + tick + pick-up + completion detection ≈ 15s) on top of the model turn. '
+              + 'This is an explicit opt-out — the default is direct ignition (true); turn it back on to skip '
+              + 'the scheduling overhead.'
+            : 'enableDirectIgnition is not true in the effective config (the key is unset/unknown): the plugin '
+              + 'never assumes the direct path without an explicit true, so rounds go through the automation queue. '
+              + 'The schema default is true, so this state means the config reader did not supply the real settings '
+              + '(bare test stub / older caller) — do not report it as the user having turned direct ignition off.')
           : (cdp.available === true
-            ? `enableDirectIgnition is on and the desktop answers CDP on port ${cdpPort}: rounds create the `
-              + 'conversation directly and skip the scheduling overhead.'
-            : `enableDirectIgnition is on, but no WorkBuddy CDP endpoint answered on port ${cdpPort} `
+            ? `enableDirectIgnition is on (the default) and the desktop answers CDP on port ${cdpPort}: rounds create `
+              + 'the conversation directly and skip the scheduling overhead.'
+            : `enableDirectIgnition is on (the default), but no WorkBuddy CDP endpoint answered on port ${cdpPort} `
               + `(${cdp.reason}), so rounds fall back to the automation queue. WorkBuddy must be started with `
               + `the user-level env var WORKBUDDY_REMOTE_DEBUGGING_PORT=${cdpPort} and then fully quit and `
               + 'relaunched — a running instance cannot gain the port. ASK the user before doing anything '
@@ -354,13 +390,13 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
       // ★ 每日签到快照：与状态路由同源（projection 单一来源）；未接线 ⇒ null（不是"未签"）。
       const checkinSummary = checkin === null || typeof checkin.projection !== 'function' ? null : checkin.projection();
 
-      // ★ R1：分节过滤逻辑 (section: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'checkin')
+      // ★ R1：分节过滤逻辑 (section: 'all' | 'overview' | 'models' | 'credits' | 'sessions' | 'conversations' | 'checkin')
       const section = typeof args?.section === 'string' ? args.section.trim().toLowerCase() : 'all';
-      const validSections = ['all', 'overview', 'models', 'credits', 'sessions', 'checkin'];
+      const validSections = ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'];
       if (!validSections.includes(section)) {
         return {
           error: 'invalid_section',
-          message: `Unknown section '${args.section}'. Supported sections: 'all', 'overview', 'models', 'credits', 'sessions', 'checkin'.`,
+          message: `Unknown section '${args.section}'. Supported sections: 'all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'.`,
           supportedSections: validSections,
           registry: runtime.registry(),
           account: currentAccountDetection(),
@@ -446,6 +482,24 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
         };
       }
 
+      // ── 独立切片 6: conversations (桌面端真实会话清单，只读) ──
+      //   ★ 2026-11-08：`sessions` 段是**本插件**的会话记性（key→CLI 会话 id，没有标题）；
+      //   用户问「桌面上最近那几条对话叫什么/哪条还活着」时，答案只在桌面端 SQLite 里。
+      //   ⇒ 单开一段、单开一个键（`conversations`），不改 `sessions` 的语义（那一份是续接用的）。
+      //   段内载荷 = `readSessionList()` 的原样信封（ok / sessions / count / truncated / reason）；
+      //   `ok:false` 时**保留失败原因**——绝不把「读不到」伪装成「一条会话都没有」。
+      //   注意本段**刻意不套 2KB 预算**：默认最多 50 条带标题的清单，条数由 limit 控制，
+      //   `truncated` 如实标出是否还有更多（切片的 2KB 纪律约束的是"摘要"，不是"清单"）。
+      if (section === 'conversations') {
+        return {
+          section: 'conversations',
+          account: currentAccountDetection(),
+          balance: liveBalance,
+          creditsRemain: liveBalance,
+          conversations: readSessionList(),
+        };
+      }
+
       // ── 默认: section === 'all' (全量防裁剪安全周边布局) ──
       const isCompact = args?.compact === true;
       return {
@@ -485,6 +539,13 @@ export const makeStatusTool = (runtime, cfg, ctx, sessions = null, dispatch = nu
           source: cost.source,
           reason: cost.reason,
         },
+        // ★ 2026-11-08：桌面端真实会话清单（只读）—— 放在底部安全区**之前**，
+        //   让最后三位仍是 sessions / inFlight / lastRun（裁剪压力测试钉住的是最后三位；
+        //   清单是诊断面，被裁掉不伤"这一轮能不能继续会话"的判断）。
+        //   ★ 为什么 all 只取 20 条（而 section='conversations' 取默认 50）：'all' 本身就是模型
+        //   每轮要读的大载荷，清单在这里是「扫一眼最近在聊什么」，不是全量导出；`truncated`
+        //   会如实标出还有更多，模型据此改用 section='conversations' 拿完整的 50 条。
+        conversations: readSessionList({ limit: 20 }),
         // ── 底部安全防线 (Bottom Perimeter: 会话与运行历史) ──
         sessions: sessionSummary(sessions).map((s) => ({
           session_key: s.sessionKey,

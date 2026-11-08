@@ -175,6 +175,13 @@ function boot(overrides = {}) {
     //     不是自动化点火；钉 spawn 既符合意图，又切断真库写入。
     //     自动化路本身由 `scripts/ignition-smoke.mjs`（点火冒烟）覆盖。
     transport: overrides.transport ?? 'spawn',
+    // ★★★ 2026-11-08（T6）：`enableDirectIgnition` 已翻为 schema 默认 true，本文件必须**显式钉 false** ★★★
+    //   同上面 `transport: 'spawn'` 那条纪律：这里调的是**真实的 run 工具**（:800 那条 prompt 就叫 'ping'），
+    //   默认开着 ⇒ 每跑一次 `npm run test:host` 都会真探本机 9222；机器上工作着带调试口的 WorkBuddy 时
+    //   （UA ∧ target 双证据会命中）就**真的在用户桌面端建一条 ping 对话并花积分**。
+    //   ⇒ 钉 false = 翻默认之前的计划任务主路（本文件其余老用例逐字不变）；默认值与三条回退分支
+    //     由 `test/dispatch-direct-default.test.js`（D0–D7，全部 seam）覆盖。
+    enableDirectIgnition: overrides.enableDirectIgnition ?? false,
     cliPath: overrides.cliPath ?? CLI_FILE,
     cwdRoot: overrides.cwdRoot ?? '',
     nodePath: overrides.nodePath ?? process.execPath,

@@ -5,6 +5,8 @@
  * Implements empirical stress-testing for:
  * 1. Size Budget Audit:
  *    - All valid sections (overview, models, credits, sessions, checkin) <= 2,048 bytes (2KB).
+ *      ★ 2026-11-08：新增 `conversations`（桌面端真实会话清单，只读）**不在此体积预算内**——
+ *        它是条数受 limit 约束的清单，不是摘要；体积纪律由 `launch/session-list.js` 的 limit 承载。
  *    - Models multiplier dict <= 1,024 bytes (1KB) for 43+ catalog models.
  * 2. Context Middle-Pruning Stress Test:
  *    - Simulate LLM context proxy middle pruning (50%, 60%, 70%).
@@ -291,7 +293,7 @@ test('Edge Case: Unknown / invalid section names return clear guidance without t
     assert.ok(res.message.includes('Unknown section'), `Input '${input}' must have guidance message`);
     assert.deepEqual(
       res.supportedSections,
-      ['all', 'overview', 'models', 'credits', 'sessions', 'checkin'],
+      ['all', 'overview', 'models', 'credits', 'sessions', 'conversations', 'checkin'],
       'Must enumerate all valid sections in guidance',
     );
     // Perimeter safety preserved

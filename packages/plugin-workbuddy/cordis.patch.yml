@@ -75,30 +75,35 @@
         # 追发确认超时（毫秒，默认 180000）。真机实测（2026-10-03）首转 13.4s（模型 worker
         #   冷启动）、次转 9.1s ⇒ 15s 在冷启动边缘，180s 留足慢机余量；超时即回退点火新会话。
         followupTimeoutMs: 180000
-        # ── direct ignition（★ 2026-10-04 新增：计划任务 → CDP 直建）────────
+        # ── direct ignition（★ 2026-10-04 新增；★ 2026-11-08 起为**默认路径**）────────
         # 点火走 CDP 直建（`create(+model/+title)` → 设配 → `runPrompt` 同步等终态），
         #   省掉计划任务的调度开销（`INSERT + tick(5s) + 拾取(10~30s) + 完成察觉` ≈ 15s；
-        #   建会话本身真机 123ms）。**默认 false**（opt-in）：它依赖桌面端带
-        #   `WORKBUDDY_REMOTE_DEBUGGING_PORT` 启动（一次性用户环境变量，运行中的实例必须
-        #   完全退出重启才生效），且开关一开就改变了点火的执行面 —— 首跑默认关、自动回退。
+        #   建会话本身真机 123ms）。**默认 true**：该路自 2026-10-04 起已真机校准闭环
+        #   （判别/回执/回退三分支都有回归测试），而调度开销每轮都在付 ⇒ 默认快路、
+        #   慢路留作回退。依赖桌面端带 `WORKBUDDY_REMOTE_DEBUGGING_PORT` 启动
+        #   （一次性用户环境变量，运行中的实例必须完全退出重启才生效）。
+        # 回退语义：CDP 不可用 / 派发**前**失败 ⇒ 自动回退计划任务（**任务不丢**，
+        #   回执 fallback/fallbackReason 如实）；**已派发**的失败一律不回退 —— 否则
+        #   同一条 prompt 会被跑第二遍（双份积分 + 两条对话）。显式 false ⇒ 行为与
+        #   旧的计划任务主路逐字节一致（零回归逃生口）。
         # 复用 followupCdpPort；超时复用计划任务 15min 口径。
-        # 回退红线：只有**派发前**失败才回退计划任务（回执 fallback/fallbackReason 如实）；
-        #   **已派发**的失败一律不回退 —— 否则同一条 prompt 会被跑第二遍（双份积分）。
-        enableDirectIgnition: false
+        # ★ 本行取值必须与 schema 默认值逐字一致（test/host.test.js 的三处同步断言会查）。
+        enableDirectIgnition: true
         # ── 每日签到自动领取（★ 2026-10-09 新增：Buddy 加油站）─────────────────
         # 状态面读到"活动进行中且今日未签"时在后台顺手领掉（先查后领、领完复核，幂等）。
         # **默认 true**：用户点名要自动完成；接口幂等（已签回 400+10001，不多发）；
         # 非活动季静默收尾。仍受总闸约束（enabled 非 true ⇒ 一次都不跑）。
         # 前置：桌面端在跑且已登录（走 wbipc 借登录态；没开就如实报读不到，不代启动）。
         enableAutoCheckin: true
-        # ── 传输面（★ 2026-10-02 切回 automation 为默认）──────────────
+        # ── 传输面（★ 2026-11-08：automation 降为**回退队列**，默认主路 = direct ignition）──
         # automation = 插件往桌面端自己的计划任务表（`~/.workbuddy/workbuddy.db` 的
         #   `automations`）写一条**一次性**任务，由**桌面端自己的调度器**开一个新会话并把
         #   提示词发下去。工作目录 / 模型 / 权限都随这一行下发，**不需要预先绑定任何会话**。
         #   点火参数：`schedule_type='once'`、`next_run_at=now`、`valid_until=+25min`
         #   （`timeoutMs(15min)+grace(10min)`），建会话成功立刻 `retireRow` 软删，
         #   任何终态都退役，启动期扫遗留活行全软删（止损就靠删行）。
-        #   ⇒ 这是当前唯一主路（`startAutomationRun` 唯一写入点）。
+        #   ⇒ 它现在是**回退**面：只在 `enableDirectIgnition` 显式关闭、或直连点火
+        #     **派发前**失败（CDP 不可用 / 建会话或设配被拒）时进入 —— 任务不丢。
         # gateway = 本机 ACP 网关已**下线**：不再走 `dispatch.run`，不再建网关会话。
         #   配置里残留 `transport:'gateway'` 一律按 automation 跑，不走网关。
         # spawn   = 老路：自己 spawn 一个 CLI。真机上**必然 auth_failed 且不扣积分** ——
@@ -184,7 +189,11 @@
 #     WorkBuddy 路由上（历史 llm-adapter.js 与本次删除的子代理通道同属红线外实现）。
 # 代码侧删除面：`src/host/subagent/**`、apply.js 的 ⑦ 面接线、`subagents` 依赖声明；
 # 测试侧：subagent-*.test.js / catalog-gate.test.js 删除，相关夹具与文案同步收口。
-- insert:
+# ★★ 2026-10-25 注意：本段原先是 `- insert:`，其下只有 Team 三行；那三行已删除，
+#    因此**整段现在是纯注释，不产生任何 patch 行**——原先的 `- insert:` 头必须一并删掉。
+#    留着空 insert 会解析成 `insert: null`，app-boot 的 applyEntryPatches 走
+#    `if (insert)` 为假 → 落到 `if (!id) warn("patch: id is required for non-insert patches")`，
+#    每次启动刷一条假警告。删除 insert 头后该分支不再进入。
     # ── 智能团队（Agent Teams）：持久化 + 团队域 + 工具 + UI（2026-10-02）──────────
     # ★ 主理人裁决：子智能体与智能团队**二选一，选智能团队**。所以这里挂 Team。
     #   Team 成员由 Lead 用 `spawn_teammate` 按**名字**创建，界面上的成员名就是那个名字 ——
@@ -207,11 +216,20 @@
     #   has been registered`。团队实际一直由 base 那份持久化服务供能（2026-10-17 真机全链路
     #   验证：成员 spawn / 消息 / 任务板全部可用）。行已删除，警告随之消失。
     #   若未来 base 不再提供该服务，按新证据重建——不要凭旧注释复活。
-    - id: agent-team
-      name: '@deepseek-ai/dsh-experimental-agent-team'
-    - id: tool-agent-team
-      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
-      # ★ `freshProvider` / `forkProvider` 保持 dsh 自带的 `spawn` / `fork`。
-      #   `spawn_teammate(name, description, task)` **没有"后端"参数** —— 成员一律是 dsh 起的 agent。
-    - id: ui-agent-team
-      name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'
+    # ★ 2026-10-25：Team 三行（agent-team / tool-agent-team / ui-agent-team）**已删除** ★
+    #   原因：profile 的 `dsh.profile.bundles` 同时启用了
+    #     @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-rc.3
+    #   它在自己的 cordis.patch.yml 里 insert 了**同样三个 id**，且**带完整 config**
+    #   （agent-team: maxMembers/maxTasks/maxMessageBytes/disposalTimeoutMs；
+    #     tool-agent-team: freshProvider/forkProvider；ui-agent-team: 无 config）。
+    #   profile 的 patch 合成语义是「行级后写覆盖」（见本文件头 §patch 语义铁律），
+    #   两份 bundle 合成后同 id 会有两行，dsh-market 的静态体检报：
+    #     duplicate loader entry id "agent-team" (2 rows: dsh-plugin-workbuddy, ...agent-team-profile)
+    #   本插件这几行**没有任何 config**：当前靠 bundles 顺序（官方 bundle 排在第 8 位、本插件第 6 位）
+    #   侥幸让官方那份后写生效；一旦顺序或选择变化，就会把 freshProvider / forkProvider /
+    #   maxMembers 整套 config 抹成空 —— 这是静默故障，不报错，只是 Team 行为变味。
+    #   故让官方 bundle 独占这三行；本插件只依赖这些模块**存在**，不依赖自己声明。
+    #   ⚠ 若将来从 bundles 里移除该官方 bundle，Team 三件套会整体消失 —— 那时再重建本段，
+    #     并且必须逐字照抄官方那份 config，不要留空。
+    # ★ `freshProvider` / `forkProvider` 保持 dsh 自带的 `spawn` / `fork`。
+    #   `spawn_teammate(name, description, task)` **没有"后端"参数** —— 成员一律是 dsh 起的 agent。

@@ -32,16 +32,20 @@ function lastRunUsage(lastRun) {
  *
  * 返回载荷（稳定契约，T03 依赖）：
  *   { pluginId, registry, registrationError, probe, config{enabled,model,effort},
- *     effort{canonical,values}, models[], modelsSource, sessions[], inFlight, lastRun }
+ *     effort{canonical,values}, models[], modelsSource, sessions[], sessionList, inFlight, lastRun }
  *   ★ `effort{canonical,values}` 由 effortCapability() **单一来源**产出（工具面复用同一函数）。
  *   ★ `config.enabled` 只存在于**本路由**：GUI 需要它；模型可见的工具面（tools/status.js）不暴露该字段。
  *   ★ `models[]` = UI 目录（桌面产品配置缓存，含 `isFree` / `supportsReasoning` 标注）。
+ *   ★ `sessionList` = 桌面端**真实**会话清单（只读；与 `sessions[]` 是两件事：前者是桌面端数据库里的
+ *     对话、带标题，后者是本插件的 key→CLI 会话 id 映射）。失败时 `ok:false` + `reason`，
+ *     **绝不**用空数组冒充「没有会话」；结构由 `launch/session-list.js` 单处承载（工具面同源）。
  */
 import { isLoopback, isLoopbackHost } from '../loopback.js';
 import { EFFORT_LEVELS, PLUGIN_ID, ROUTE_STATUS } from '../../../shared/constants.js';
 import { disabledSnapshot, readCostCatalog } from '../../launch/cost-catalog.js';
 import { desktopModels } from '../../launch/desktop-models.js';
 import { readModelCatalog, detectionStateOf } from '../../launch/model-catalog.js';
+import { readSessionList } from '../../launch/session-list.js';
 import { currentAccountDetection } from '../../gateway/automation.js';
 import { sessionSummary } from '../../session/map.js';
 
@@ -193,6 +197,14 @@ export function makeStatusRoute(settings, runtime, ns, env = process.env, sessio
           : { ...cost.snapshot, available: registry === 'REGISTERED', source: cost.source, reason: cost.reason },
         // §5.1：会话映射（key → CLI session id）—— 让"继续会话"这件事在 UI 侧可见。
         sessions: sessionSummary(sessions),
+        // ★ 2026-11-08：桌面端**真实**会话清单（只读，来自桌面端 SQLite 的 `sessions` 表）。
+        //   与上面的 `sessions[]` 刻意不同字段：那份是**本插件**的会话记性（续接用、无标题），
+        //   这份是**用户桌面上真实存在的对话**（标题 / 时间 / 是否活跃）。
+        //   ★ 失败面：库缺失 / 被锁 / 旧 schema ⇒ `{ ok:false, reason }`，**不抛错**、也**不用空数组
+        //   冒充「没有会话」**（读不到 ≠ 没有）。本字段永不让整个路由失败 —— 诊断端点必须能开。
+        //   ★ 不套 ①硬闸：`sessions[]` / `account` 在关闭态本来就照常回显（只读诊断面不是"集成行为"），
+        //   而这里连桌面端 IPC 都不碰，只是一次本地只读查询。
+        sessionList: readSessionList(),
         inFlight: runtime.inFlight(),
         lastRun: runtime.lastRun(),
         // ★ 只读账号确认面：插件识别到的现役账号 id 与证据来源。
