@@ -1,6 +1,6 @@
-# dsh-plugin-qoder (v0.1.0)
+# dsh-plugin-qoder (v0.1.1)
 
-把本机 **Qoder CN** 桌面端纳入 DshAgentHub / dsh 控制平面的第三个 harness 插件（WorkBuddy ✓ / OpenCode ✓ / **Qoder 进行中 → 本包首版**），注册在「Harness 接入」父设置页的 `Qoder` 标签下。
+把本机 **Qoder CN** 桌面端纳入 DshAgentHub / dsh 控制平面的第三个 harness 插件（WorkBuddy ✓ / OpenCode ✓ / **Qoder**），注册在「Harness 接入」父设置页的 `Qoder` 标签下。
 
 ## 通道（事实边界）
 
@@ -19,18 +19,24 @@
 - **`scheduled_tasks` 不支持**：Qoder 无计划任务列表/删除能力；本包保持 `scheduled_tasks` 计数 **0** 不变式，不提供任务列表/删除 UI。
 - 未验证能力如实报告为 **`unknown`**，不编造：`reasoningEffort` 的 `submitRich` 入参形态（仅在模型目录能力命中时记录/观测，不伪造成功）、审批接力（八步之 8）、权限 5 值字面量。
 
-## 签到与积分（CN 首版）
+## 签到与积分（CN）
 
-- 用户粘贴一次 `pt-` PAT → 交换 jobToken/sash 令牌 → 查询 `sash/api/v2/me/usage` 余额与 `sash/api/v1/me/campaigns` → 一键领取每日签到（100 Credits，幂等处理）。
-- 卡片显示余额、今日领取状态（可领取/已领取/当前无活动/未配置/错误）与一键领取。
-- **不读** `auth.v1.dat`，不做 DPAPI，不拉起任何进程。CN `requiresDeviceRisk:false`（首版不做 UMID 设备风控）；global 明确不支持/unknown。
-- 协议参考（MIT，保留致谢）：[dingminhua/dsh-connect-qoder](https://github.com/dingminhua/dsh-connect-qoder)（`cosy/upstream/credentials` 思路与端点契约）+ L0NE-6/Qoder-Daily。实现位于 `src/host/signin/*`，含来源注释。
+### 如何获取个人令牌（PAT）
+1. 在 Qoder 账号/个人设置中创建或复制**个人令牌**（格式以 `pt-` 开头）。
+2. 在 DSH「设置 → Harness 接入 → Qoder → 签到与积分」中粘贴并点击「保存」。
+3. PAT **仅需一次**：保存后仅存本机 `DSH_HOME/qoder-cn-signin.json`（尽力 0600），不回显、不进日志/回执/设置快照。
 
-## 启动项
+> 说明：本机 Qoder 加密登录态（`auth.v1.dat`，Chromium os_crypt v10+DPAPI）经实测**不包含** `pt-` PAT（包含其他 token），因此不能自动拉取该 PAT。仓库提供只读/脱敏的辅助脚本 `tools/dev/extract-qoder-cn-credential.mjs`（tools/ 下，不在插件运行时执行），用于诊断/提取尝试；当前场景下仍需用户提供 `pt-` PAT。
 
-- 默认写入 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Qoder CN (dsh).cmd`，参数 `--remote-debugging-port=9333`。
-- 设置卡提供位置/参数展示与一键撤销。
-- 若存在注册表 Run 键自启冲突：**仅报告、不修改**（插件不检查/不修改注册表，避免进程执行）。
+- 保存 PAT 后：查询 `sash/api/v2/me/usage` 余额与 `sash/api/v1/me/campaigns`，支持一键领取每日签到（幂等）。卡片显示余额、今日领取状态（可领取/已领取/当前无活动/未配置/错误）。
+- CN 首版；global 不支持/unknown。协议参考（MIT，保留致谢）：[dingminhua/dsh-connect-qoder](https://github.com/dingminhua/dsh-connect-qoder) + L0NE-6/Qoder-Daily。
+
+## 启动项（自动）
+
+- **启用 Qoder 接入**时自动写入 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Qoder CN (dsh).cmd`（`--remote-debugging-port=9333`）。
+- **关闭启用**时自动清理启动项。
+- 写入/清理后需**手动重启 Qoder** 生效；插件不启动/关闭/重启 Qoder。
+- 注册表 Run 键自启冲突：仅报告风险方向、不自动修改。
 
 ## 工具
 

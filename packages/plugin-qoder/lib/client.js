@@ -199,8 +199,6 @@ window.__ModuleLoader__.load({
       }, [open, inView]);
 
       async function loadStartup() { try { setStartup(await fetchJson(ROUTE_STARTUP)); } catch (e) { setStartup({ error: errorText(e) }); } }
-      async function applyStartup() { setBusy(true); try { setStartup(await fetchJson(ROUTE_STARTUP, { method: 'POST' })); } catch (e) { setToast(T.fail + errorText(e)); } finally { setBusy(false); } }
-      async function revokeStartup() { setBusy(true); try { setStartup(await fetchJson(ROUTE_STARTUP, { method: 'DELETE' })); } catch (e) { setToast(T.fail + errorText(e)); } finally { setBusy(false); } }
 
       async function refreshCredits() {
         setBusy(true);
@@ -308,6 +306,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsh-qc-line', key: 'claim' }, `签到: ${claimLabel(claimState)}${credits?.checkedAt ? ' · ' + fmtTime(credits.checkedAt) : ''}`),
           usage?.userQuota ? h('div', { className: 'dsh-qc-line', key: 'uq' }, `额度: ${usage.userQuota.remaining ?? '?'} / ${usage.userQuota.total ?? '?'}`) : null,
           credits?.error ? h('div', { className: 'dsh-qc-line dsh-qc-warn', key: 'err' }, String(credits.error.message || credits.error.kind || '读取失败')) : null,
+          !signinMeta.configured ? h('div', { className: 'dsh-qc-line dsh-qc-diag', key: 'how' }, T.patHow) : null,
           h('div', { className: 'dsh-qc-row', key: 'pat' }, [
             h('label', { className: 'dsh-qc-row__label', key: 'l' }, T.pat),
             h('input', { key: 'i', type: 'password', className: 'dsh-qc-input', value: patInput, placeholder: 'pt-…（仅需一次）', autoComplete: 'off', onChange: (e) => setPatInput(e.target.value) }),
@@ -317,7 +316,7 @@ window.__ModuleLoader__.load({
             h('button', { key: 'save', type: 'button', className: 'dsh-qc-btn dsh-qc-btn--p', disabled: busy || !String(patInput || '').trim(), onClick: savePat }, T.save),
             h('button', { key: 'claim', type: 'button', className: 'dsh-qc-btn', disabled: busy || !signinMeta.configured, onClick: claim }, claimable ? T.claim : (claimState === 'claimed' ? T.claimed : T.claim)),
             h('button', { key: 'ref', type: 'button', className: 'dsh-qc-btn', disabled: busy, onClick: refreshCredits }, T.refresh),
-            h('button', { key: 'out', type: 'button', className: 'dsh-qc-btn', disabled: busy || !signinMeta.configured, onClick: clearPat }, T.logout),
+            signinMeta.configured ? h('button', { key: 'out', type: 'button', className: 'dsh-qc-btn', disabled: busy, onClick: clearPat }, T.logout) : null,
           ]),
         ]),
 

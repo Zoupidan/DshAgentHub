@@ -1,5 +1,14 @@
 # Changelog — dsh-plugin-qoder
 
+## 0.1.1 (2026-11-08)
+
+修复发版事故与 UX 问题（不改 0.1.0 事实，补丁发布）：
+- 修复 host 加载阻断：`routes/{signin,startup,task-delete}` 的 `loopback` 导入路径修正，避免插件无法加载/Qoder 标签不出现。
+- 修复 client 状态拉取与设置写入：`fetchStatus`→`fetchJson`；`configForms.set` 改为 `(field,value)`（opencode/workbuddy 同款），修复“启用闪一下即回退”。
+- UX：卡片默认展开；**启用自动写入启动项+刷新（已配置凭据时自动刷新积分），关闭自动清理启动项**，移除手动启动项按钮；精简文案，明确「如何获取 pt- PAT」；`writable!==false` 放宽避免开关误禁用。
+- 凭据：新增 `tools/dev/extract-qoder-cn-credential.mjs`（os_crypt v10+DPAPI，只读解密、脱敏输出、tools/ 非插件运行时）。实测 `auth.v1.dat` 不含 `pt-` PAT，故 CN 积分 PAT 仍需用户一次性提供。
+- 通过 `ci:redlines` 4/4、qoder host+client 15/15。
+
 ## 0.1.0 (2026-11-08)
 
 首版：Qoder CN 第三 harness 接入（CDP + `window.qoderDesktop.applicationInvoke`）。
