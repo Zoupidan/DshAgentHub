@@ -27,7 +27,7 @@
 | 角色 | 是谁 | 职责 |
 |---|---|---|
 | 大脑 | dsh（DeepSeek Harness） | 监控、创建对话、下发任务、收回执、发起审批 |
-| 手 | 桌面 harness：已接入 WorkBuddy；攻坚 opencode | 在自己界面里把活干出来，全程可见 |
+| 手 | 桌面 harness：**WorkBuddy ✓ · OpenCode ✓ · Qoder 进行中** | 在自己界面里把活干出来，全程可见 |
 | 神经 | 本仓库（DshAgentHub） | 把每个 harness 接进 dsh 的插件集 |
 
 ---

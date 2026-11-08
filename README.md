@@ -6,6 +6,7 @@ DshAgentHub 把本机 agent（首个 WorkBuddy）变成**团队里看得见、�
 >
 > 一 harness 一包：`packages/plugin-workbuddy`（WorkBuddy 桌面端，下文能力面以它为准）与
 > `packages/plugin-opencode`（OpenCode 桌面端，2026-10-15 落地，见包内 README）。
+> **路线图：WorkBuddy ✓ · OpenCode ✓ · Qoder 进行中**（Qoder 调研见 `04-docs/qoder/`，实现另立任务）。
 > 设置页里两者由 `packages/plugin-harness-hub` 合并为**「Harness 接入」父条目**下的两个标签页
 > （各卡抬头是运行态**状态标签**：未开启 / 未启动 / 工作中 / 任务下发中…）。
 
