@@ -26,7 +26,7 @@
  *   凭据形状与进程出口字样的**字面量**一律以片段拼出（见文末卫生用例），
  *   免得日后有人把扫描面扩到 test/ 时这份文件先把自己拦下。
  */
-import { test } from 'node:test';
+import { afterEach, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -62,7 +62,18 @@ function makeFakeReact() {
   /** @type {number[]} */
   let scheduled = [];
   const React = {
-    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    createElement: (type, props, ...children) => {
+      const node = { type, props: props ?? {}, children };
+      // 最小 ref 提交语义（真机由 React 在 commit 阶段做）：宿主元素上的 `ref` 拿到"节点"。
+      // ★ 拿到后**从 props 里删掉**：本文件的 walker（findAll / textOf / mainText）会遍历
+      //   props 里的对象值，留着 `ref` 会把同一棵子树再走一遍 ⇒ 文案重复、顺序断言失真。
+      const ref = node.props.ref;
+      if (ref !== null && typeof ref === 'object' && 'current' in ref) {
+        ref.current = node;
+        delete node.props.ref;
+      }
+      return node;
+    },
     useState(init) {
       const cursor = React.__cursor++;
       if (!(cursor in cells)) cells[cursor] = { value: typeof init === 'function' ? init() : init };
@@ -73,6 +84,16 @@ function makeFakeReact() {
           cell.value = typeof next === 'function' ? next(cell.value) : next;
         },
       ];
+    },
+    /**
+     * 最小 useRef：cells 跨渲染保留 ⇒ 同一 ref 对象在重渲染后仍是同一个（与真 React 同语义）。
+     * A1 自动刷新用它挂卡片根节点（IntersectionObserver 的观察对象）—— 产品代码用它，
+     * 测试台就必须提供它：**不许**把产品代码改成迁就测试台。
+     */
+    useRef(init) {
+      const cursor = React.__cursor++;
+      if (!(cursor in cells)) cells[cursor] = { value: { current: init } };
+      return cells[cursor].value;
     },
     useEffect(fn, deps) {
       const cursor = React.__cursor++;
@@ -105,6 +126,20 @@ function makeFakeReact() {
         const cell = cells[cursor];
         const cleanup = cell.fn();
         cell.cleanup = typeof cleanup === 'function' ? cleanup : undefined;
+      }
+    },
+    /**
+     * 模拟卸载：把每个 effect 已登记的 cleanup 全部跑一遍（真 React 卸载语义的最小面）。
+     * A1 的「卸载 ⇒ 定时器清掉、在途请求 abort、监听器摘掉」必须能被断言到 ——
+     * 没有卸载入口，这条纪律就没法在测试台里验证。
+     */
+    unmountAll() {
+      for (const cell of cells) {
+        if (cell !== undefined && typeof cell.cleanup === 'function') {
+          const cleanup = cell.cleanup;
+          cell.cleanup = undefined;
+          cleanup();
+        }
       }
     },
   };
@@ -232,10 +267,19 @@ function makeGuardedCtx(plugin, { scope, onEffect } = {}) {
   return { ctx, slotsCalls, registrations, bindSpecs };
 }
 
-/** 伪 document（仅 CSS 去重所需面）。 */
-function makeFakeDocument() {
+/**
+ * 伪 document：① CSS 去重所需面；② 可选补上 **A1 自动刷新所需的可见性面** ——
+ * `visibilityState` + `addEventListener('visibilitychange')`。
+ *
+ * ★ `events` 默认 **false**（保持这份伪件的旧语义：只有 CSS 去重那点面），`boot()` 才显式装事件面；
+ *   这样"宿主连事件面都没有"的退化路径仍然有一个真实入口可测（见「A1 能力探测」用例）。
+ * 事件登记表是"能主动派发"的（`setVisibility`），否则"页面隐藏 ⇒ 停轮询"这条判据无从驱动。
+ */
+function makeFakeDocument({ events = false } = {}) {
   const created = [];
-  return {
+  /** @type {Map<string, Set<Function>>} */
+  const listeners = new Map();
+  const doc = {
     created,
     head: { appendChild: (tag) => created.push(tag) },
     createElement: () => ({ dataset: {}, textContent: '' }),
@@ -246,6 +290,24 @@ function makeFakeDocument() {
       return created.find((tag) => tag.dataset.pluginCss === id) ?? null;
     },
   };
+  if (events) {
+    doc.visibilityState = 'visible';
+    doc.addEventListener = (type, fn) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(fn);
+    };
+    doc.removeEventListener = (type, fn) => {
+      listeners.get(type)?.delete(fn);
+    };
+    /** 已登记的监听器数量（卸载断言的负控：必须归零）。 */
+    doc.listenerCount = (type) => listeners.get(type)?.size ?? 0;
+    /** 切到 hidden/visible 并派发 visibilitychange（真机由浏览器派发）。 */
+    doc.setVisibility = (next) => {
+      doc.visibilityState = next;
+      for (const fn of [...(listeners.get('visibilitychange') ?? [])]) fn();
+    };
+  }
+  return doc;
 }
 
 // ───────────────────────── 载荷夹具（字段名 = 契约，见 src/host/types/index.js） ─────────────────────────
@@ -503,8 +565,11 @@ function labelText(node) {
  *
  * ⚠️ 与 withBundle 不同，boot 会在**整个用例生命周期内**保留全局覆盖（fetch 在 effect 回放时
  *    才被调用 ⇒ 不能在导入后立即还原）；每次 boot 覆盖上一例，进程随测试结束退出。
+ *
+ * @param {{ documentFake?: object }} [options] `documentFake` 用于显式换掉伪 document
+ *   （A1 的"宿主没有事件面"退化路径要一个不带 addEventListener 的版本）。
  */
-async function boot({ scopeValue = {}, scopeOptions = {}, status = statusPayload(), fetchImpl } = {}) {
+async function boot({ scopeValue = {}, scopeOptions = {}, status = statusPayload(), fetchImpl, documentFake } = {}) {
   const runtime = makeFakeReact();
   const scope = makeScope(scopeValue, scopeOptions);
   const fetches = [];
@@ -516,7 +581,9 @@ async function boot({ scopeValue = {}, scopeOptions = {}, status = statusPayload
     });
   let captured = null;
   globalThis.window = { __ModuleLoader__: { load: (registration) => { captured = registration; } } };
-  globalThis.document = makeFakeDocument();
+  // ★ 默认给足事件面（真机浏览器本来就有）：A1 的可见性/焦点判据要能被驱动；
+  //   要测"没这个能力"的宿主，显式传 documentFake。
+  globalThis.document = documentFake ?? makeFakeDocument({ events: true });
   globalThis.fetch = fetchFn;
   await import(pathToFileURL(CLIENT_PATH).href + '?case=' + String(++importNonce));
   assert.ok(captured !== null, 'bundle 必须经 window.__ModuleLoader__.load 注册');
@@ -567,6 +634,105 @@ async function boot({ scopeValue = {}, scopeOptions = {}, status = statusPayload
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+// ───────────────────────── A1 自动刷新的测试基建（2026-10-18） ─────────────────────────
+//
+// A1 给卡片引入了一条 setTimeout 轮询链，测试**必须**把 timer 接管掉：
+//   ① 每个用例都会留下真实的 15s 定时器 ⇒ 整份测试的退出被拖住；
+//   ② "不可见 ⇒ 不再拉"要能确定性地推进时间，真 timer 做不到。
+// 只接管 setTimeout（clearTimeout 随之）、**不接管 setImmediate** —— `settle()` 靠它让出微任务。
+mock.timers.enable({ apis: ['setTimeout'] });
+/** 文件加载时的 `Math.random` 原函数：afterEach 守卫拿它比对（防用例把替身漏在全局）。 */
+const REAL_RANDOM = Math.random;
+// ★ 每个用例开工前把挂起的假 timer 清空：不清的话，前面用例留下的轮询链会被本用例的 `tick()`
+//   一起引爆，而它们唤起的是**当时那个**全局 fetch（早已被换成本用例的）⇒ "隐藏 ⇒ 0 请求"
+//   当场失真（lead 在 WorkBuddy 侧实测串出过一批假请求）。
+afterEach(() => {
+  mock.timers.reset();
+  mock.timers.enable({ apis: ['setTimeout'] });
+  // ★ 跨用例**不泄漏**守卫：任何用例结束后 `Math.random` 都必须是原函数。漏还原一次，后面
+  //   **整个文件**的档位断言就都在"抖动被钉死"的前提下跑，而那种污染是**静默**的 ——
+  //   2026-10-18 T3 验收在本文件抓到过（同一用例连调两次 `t.mock.method`，第一次的替身留在全局）。
+  assert.equal(Math.random, REAL_RANDOM, 'Math.random 被用例改了没还原（抖动钉法必须自还原，见 pinJitter）');
+});
+
+/**
+ * 推进假 timer 并让出微任务。
+ * ⚠️ fetch 是异步的：只 `tick()` 不让出事件循环，断言会跑在响应落地之前（假绿/假红的常见来源），
+ *   所以推进后连让两轮。
+ */
+async function advance(ms) {
+  mock.timers.tick(ms);
+  await settle();
+  await settle();
+}
+
+/**
+ * 钉住档位抖动系数：`pollJitter = round(base × (0.85 + r × 0.3))`。
+ *   · `0.5` ⇒ 系数恰为 1.0（按档位原值推进即可，最省脑子的档位判据）；
+ *   · `0` / `1` ⇒ 系数 0.85 / 1.15，用来钉 ±15% 的**上下边界**。
+ *
+ * ★ 为什么自造这个、不用 `t.mock.method(Math, 'random', …)`：同一用例对**同一属性**连调两次时，
+ *   node:test 在用例结束只还原最后一层 —— **第一次的替身会留在全局**。最小复现（实测）：
+ *   同一用例连 mock 两次 ⇒ 下一例 `Math.random()` 恒 0 ⇒ 抖动系数恒 0.85。后果不是当场判假，
+ *   而是 ③b 之后的整个文件都在"抖动被钉死"的前提下跑：以后任何"验证抖动"的用例都会**静默失效**
+ *   （T3 的探针在全量跑时量到 0、隔离跑才量到真值，就是这么被坑的）。
+ *   ⇒ 钉法必须**自还原**：调用方在 try/finally 里调 `unpin()`；另有一条 afterEach 守卫兜底
+ *     （谁漏还原 ⇒ 立刻红，并且指名是哪一个用例）。
+ * @param {number} value 替身返回值（真实 `Math.random()` 的值域是 [0,1)）
+ */
+function pinJitter(value = 0.5) {
+  const original = Math.random;
+  Math.random = () => value;
+  return () => { Math.random = original; };
+}
+
+/**
+ * 装一个可手动触发的 IntersectionObserver 桩（真机由浏览器回调）。
+ * 返回 `trigger(isIntersecting)` —— 驱动"进入/离开视口"这条判据（hub 的隐藏标签页 = 没有盒
+ * = 真机会报 isIntersecting:false，桩里由测试自己决定何时报）。
+ */
+function installIntersectionObserver() {
+  const observers = [];
+  class FakeIntersectionObserver {
+    constructor(callback, options) {
+      this.callback = callback;
+      this.options = options;
+      this.targets = [];
+      observers.push(this);
+    }
+    observe(el) { this.targets.push(el); }
+    disconnect() { this.disconnected = true; }
+    /** 测试驱动：真机也是回调式，不是返回值。 */
+    fire(isIntersecting) {
+      this.callback([{ isIntersecting, target: this.targets[0] }], this);
+    }
+  }
+  globalThis.IntersectionObserver = FakeIntersectionObserver;
+  return {
+    observers,
+    trigger: (isIntersecting) => { for (const observer of observers) observer.fire(isIntersecting); },
+  };
+}
+
+/** 撤掉 IO 桩（显式装的就显式收，免得串到后面的用例）。 */
+function uninstallIntersectionObserver() {
+  delete globalThis.IntersectionObserver;
+}
+
+/**
+ * 给伪 `window` 补上 focus 事件面（boot 造的 window 只有 `__ModuleLoader__`）。
+ * ⚠️ 必须在 **flushEffects 之前**调用：产品代码是在 effect 里探测 `window.addEventListener`。
+ */
+function installFocusSource() {
+  const listeners = new Set();
+  const target = globalThis.window;
+  target.addEventListener = (type, fn) => { if (type === 'focus') listeners.add(fn); };
+  target.removeEventListener = (type, fn) => { if (type === 'focus') listeners.delete(fn); };
+  target.dispatchFocus = () => { for (const fn of [...listeners]) fn(); };
+  target.focusListenerCount = () => listeners.size;
+  return target;
+}
 
 /** 载荷 → 展开后的卡片（沿用既有 boot + effect 回放机制，不另造渲染入口）。 */
 async function bootFromStatus(statusOverrides, { scopeValue = {} } = {}) {
@@ -945,8 +1111,8 @@ test('判据④b：未启动判定 —— SERVICE_MISSING 或 probe.installed===
     const main = mainText(tree);
     assert.ok(main.includes('○ 未启动'), `${label} ⇒ ○ 未启动`);
     assert.ok(
-      main.includes('本机没找到可用的 OpenCode 服务（service.json 未命中或已失效）—— 先启动 OpenCode 桌面端，再点刷新。'),
-      '未启动必须给一句可执行的话（唯一动作：把桌面端打开）',
+      main.includes('本机没找到可用的 OpenCode 服务（service.json 未命中或已失效）—— 先启动 OpenCode 桌面端，本卡会自动重拉。'),
+      '未启动必须给一句可执行的话（唯一动作：把桌面端打开；★ 按钮已删 ⇒ 不许再指引"点刷新"）',
     );
     const badge = findAll(tree, (n) => n.type === 'span' && String(n.props.className).startsWith('dsh-oc-badge'))[0];
     assert.ok(String(badge.props.className).includes('dsh-oc-badge--not-started'));
@@ -1051,40 +1217,41 @@ test('降级路径：状态路由不可达 ⇒ 显式错误文案（不把失败
   assert.equal(foldText(tree).includes('诊断接口'), false, '载荷未到达 ⇒ 诊断折叠不画（避免半张表）');
 });
 
-test('状态 bridge 调用面：同源相对路径 + AbortSignal；刷新按钮只重拉状态、不碰配置', async () => {
+test('状态 bridge 调用面：同源相对路径 + AbortSignal；拉取由 A1 驱动且不写配置（已无手动入口）', async () => {
   const app = await boot({});
   app.expand();
   app.flushEffects();
   await settle();
-  assert.equal(app.fetches.length, 1);
+  assert.equal(app.fetches.length, 1, '★ 挂载即拉一次（按钮已删，这是首屏唯一的状态来源）');
   assert.equal(app.fetches[0].url, ROUTE_STATUS, '必须走共享常量里的同源相对路径');
-  assert.ok(app.fetches[0].options.signal instanceof AbortSignal, '必须带中止信号（竞态下过期响应要能被放弃）');
-
-  const button = findAll(app.expand(), (n) => n.type === 'button' && n.props.className === 'dsh-oc-card__refresh')[0];
-  assert.equal(labelText(button), '刷新状态');
-  assert.equal(button.props.title, '重新拉取运行状态（不改配置）', '★ 按钮必须明确"只重拉状态，不碰配置"');
-  button.props.onClick();
-  app.expand();
-  app.flushEffects();
-  await settle();
-  assert.equal(app.fetches.length, 2, '刷新必须重新拉取状态');
-  assert.equal(app.scope.commits.length, 0, '★ 刷新不得触发任何设置写入');
+  assert.ok(app.fetches[0].options.signal instanceof AbortSignal, '必须带中止信号（竞态/不可见时在途请求要能被放弃）');
+  assert.equal(app.scope.commits.length, 0, '★ 拉状态绝不触发设置写入（拉与写是两条路）');
+  // 卡上不再有任何手动刷新入口（这条负向断言由「A1 ②」在 DOM/CSS/i18n 三处逐一钉住）。
+  const tree = app.expand();
+  assert.equal(
+    findAll(tree, (n) => n.type === 'button' && String(n.props?.className ?? '').includes('refresh')).length,
+    0,
+    '★ 手动刷新入口必须彻底消失',
+  );
 });
 
-test('R1 补强：stale 响应竞态 —— 刷新后旧响应不得覆盖新值', async () => {
+test('R1 补强：stale 响应竞态 —— 重臂后旧响应不得覆盖新值（旧在途请求必须被 abort）', async () => {
   let resolveSecond = null;
   const second = new Promise((resolve) => {
     resolveSecond = resolve;
   });
+  /** 自留一份调用记录：这条用例用自定义 fetchImpl，boot 的 `fetches` 不参与。 */
+  const sent = [];
   let calls = 0;
   const app = await boot({
-    fetchImpl: async () => {
+    fetchImpl: async (url, options) => {
+      sent.push({ url, options });
       calls += 1;
       if (calls === 1) {
         return { ok: true, status: 200, json: async () => statusPayload({ registry: 'REGISTERED' }) };
       }
       if (calls === 2) {
-        const payload = await second; // 第二次：慢
+        const payload = await second; // 第二次：慢（★ 故意不理会 abort 信号 —— 真机上也有这种实现）
         return { ok: true, status: 200, json: async () => payload };
       }
       return { ok: true, status: 200, json: async () => statusPayload({ registry: 'SERVICE_MISSING' }) };
@@ -1095,22 +1262,449 @@ test('R1 补强：stale 响应竞态 —— 刷新后旧响应不得覆盖新值
   await settle();
   assert.ok(mainText(app.expand()).includes('注册：REGISTERED'), '前提：首次加载已完成');
 
-  const clickRefresh = () =>
-    findAll(app.expand(), (n) => n.type === 'button' && n.props.className === 'dsh-oc-card__refresh')[0].props.onClick();
-  clickRefresh(); // 第二次 fetch（慢）开始
+  // 第二次拉取（慢）开始：配置一变 ⇒ pollNonce 自增 ⇒ 链重臂
+  await app.scope.set('enabled', true);
   app.expand();
   app.flushEffects();
-  clickRefresh(); // 第三次 fetch（快）开始，第二次变旧
+  await settle();
+  assert.equal(calls, 2, '前提：慢的那次已在途');
+  // 第三次拉取（快）：再变一次配置 ⇒ 再重臂（旧链 cleanup 在这一刻 abort 掉在途的那次）
+  await app.scope.set('variant', 'high');
   app.expand();
   app.flushEffects();
   await settle();
   assert.ok(mainText(app.expand()).includes('注册：SERVICE_MISSING'), '新响应必须生效');
+  assert.equal(sent[1].options.signal.aborted, true, '★ 重臂必须 abort 掉在途的旧请求（不是只靠标志位）');
 
   resolveSecond(statusPayload({ registry: 'DEGRADED' })); // 旧响应此后才到
   await settle();
   const after = mainText(app.expand());
   assert.ok(after.includes('注册：SERVICE_MISSING'), '旧响应必须被丢弃');
   assert.equal(after.includes('注册：DEGRADED'), false, '旧响应不得覆盖新值');
+});
+
+// ───────────────────────── A1 自动刷新（2026-10-18 用户批准的方案；host 一行不改） ─────────────────────────
+//
+// 判据组与产品代码「A1 自动刷新」一节逐条对应：① 挂载即拉 ② 按钮删净 ③ 档位 ④ 不可见 ⇒ 0 请求
+// ⑤ 视口事件 ⑥ 配置变化 ⑦ focus + 卸载清理 ⑧ 单在途 ⑨ 失败重试 ⑩ 能力探测退化。
+// ⚠️ 时间一律走 `advance()`（假 timer）+ 钉住 `Math.random`：`pollJitter` 是 ±15%，
+//    不钉就"时灵时不灵"——那是假绿/假红的常见来源，不是被测代码的问题。
+// ⚠️ 钉法一律 `pinJitter(...)` + try/finally 自还原；**不许**用 `t.mock.method` 钉 `Math.random`
+//    （同一用例连 mock 两次会漏替身到全局，见 pinJitter 头注）。afterEach 另有一条泄漏守卫兜底。
+
+test('A1 ①：挂载即拉一次（按钮已删 ⇒ 首屏状态只能由卡片自己拉）', async () => {
+  const app = await boot({});
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 1, '★ 挂载立刻拉一次');
+  assert.equal(app.fetches[0].url, ROUTE_STATUS);
+  assert.ok(mainText(app.expand()).includes('● 已启动'), '载荷落地后正常上屏');
+});
+
+test('A1 ②：手动刷新入口删净 —— DOM / CSS / i18n 三处都不留', async () => {
+  const app = await boot({});
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const tree = app.expand();
+
+  // ① DOM：按钮（类名 / 文案 / title）与它的容器一律不许有。
+  assert.equal(
+    findAll(tree, (n) => n.type === 'button' && String(n.props?.className ?? '').includes('refresh')).length,
+    0,
+    '★ 不得再有刷新按钮',
+  );
+  assert.equal(findAll(tree, (n) => labelText(n) === '刷新状态').length, 0, '按钮文案不得残留');
+  assert.equal(textOf(tree).includes('刷新状态'), false, '整棵树都不许出现这句文案');
+  assert.equal(textOf(tree).includes('重新拉取运行状态'), false, '按钮 title 文案不得残留');
+  assert.equal(
+    findAll(tree, (n) => String(n.props?.className ?? '').includes('dsh-oc-card__actions')).length,
+    0,
+    '★ 按钮容器随之删净（它唯一的用途就是摆那个按钮）',
+  );
+
+  // ② CSS：按钮规则与容器规则都不留；正控 = 卡片自身样式照旧（不是把整份 style 删了）。
+  const documentFake = makeFakeDocument();
+  await withBundle({ document: documentFake }, async (registration) => {
+    registration.factory(makeRequire(makeFakeReact().React).fakeRequire);
+    const css = documentFake.created[0].textContent;
+    assert.equal(css.includes('refresh'), false, '★ CSS 不留按钮规则');
+    assert.equal(css.includes('__actions'), false, '★ 按钮容器规则也删净');
+    assert.ok(css.includes('.dsh-oc-card__toggle'), '正控：卡片自身的样式照旧在');
+  });
+
+  // ③ i18n + 产物源码：连 `refresh` 这个 ASCII 词都不该有（grep 级判据，T3 会照这条复核）。
+  const source = readFileSync(CLIENT_PATH, 'utf8');
+  assert.equal(/refresh/i.test(source), false, '★ 产物里不得出现 refresh（DOM/CSS/i18n/注释一视同仁）');
+  assert.equal(/shell\.refresh/.test(source), false, '没有任何遗留引用点');
+});
+
+test('A1 ③：可见期兜底档位 —— 空闲 15s / 在途 3s（钉住抖动系数 1.0，按档位原值推进）', async () => {
+  const unpin = pinJitter(0.5); // 0.85 + 0.5×0.3 = 1.0 ⇒ 档位原值
+  try {
+    const idle = await boot({});
+    idle.expand();
+    idle.flushEffects();
+    await settle();
+    assert.equal(idle.fetches.length, 1);
+    await advance(3450); // 3s 档的 ±15% **上界**都没响 ⇒ 一定不是 3s 档
+    assert.equal(idle.fetches.length, 1, '★ 空闲 ⇒ 不走 3s 档');
+    await advance(15000 - 3450); // 累计 15000
+    assert.equal(idle.fetches.length, 2, '★ 空闲 ⇒ 15s 档');
+    await advance(15000);
+    assert.equal(idle.fetches.length, 3, '链是连续的：下一轮仍然按档位排');
+    idle.runtime.unmountAll(); // 收掉本卡的链，免得它进到下面那条用例的时间轴里
+
+    const busy = await boot({
+      status: statusPayload({ inFlight: [{ sessionKey: 'k1', sessionId: '', startedAt: Date.now(), phase: 'waiting' }] }),
+    });
+    busy.expand();
+    busy.flushEffects();
+    await settle();
+    assert.equal(busy.fetches.length, 1);
+    await advance(3450); // 3s 档的 ±15% 上界（3450）
+    assert.equal(busy.fetches.length, 2, '★ 有在途 ⇒ 3s 档（等进度的场景值得勤拉）');
+    await advance(3450);
+    assert.equal(busy.fetches.length, 3, '在途仍在 ⇒ 继续 3s 档');
+  } finally {
+    unpin();
+  }
+});
+
+test('A1 ③b：抖动落在 ±15%（0.85× 下界 / 1.15× 上界，逐毫秒钉住）', async () => {
+  const inflight = statusPayload({
+    inFlight: [{ sessionKey: 'k1', sessionId: '', startedAt: Date.now(), phase: 'waiting' }],
+  });
+
+  // 下界：r=0 ⇒ 系数 0.85 ⇒ 2550ms（15000 档同理）。
+  // ★ 每次钉法各带一段 try/finally：本用例历史上正是"同一用例连钉两次"把替身漏在全局的地方。
+  const unpinLow = pinJitter(0);
+  try {
+    const low = await boot({ status: inflight });
+    low.expand();
+    low.flushEffects();
+    await settle();
+    await advance(2549);
+    assert.equal(low.fetches.length, 1, '0.85×3000=2550 之前不响（下界不许更小）');
+    await advance(1);
+    assert.equal(low.fetches.length, 2, '到点即响 ⇒ 下界恰为 0.85×');
+    low.runtime.unmountAll();
+
+    const idleLow = await boot({});
+    idleLow.expand();
+    idleLow.flushEffects();
+    await settle();
+    await advance(12749);
+    assert.equal(idleLow.fetches.length, 1, '0.85×15000=12750 之前不响');
+    await advance(1);
+    assert.equal(idleLow.fetches.length, 2, '到点即响 ⇒ 空闲档下界恰为 0.85×');
+    idleLow.runtime.unmountAll();
+  } finally {
+    unpinLow();
+  }
+
+  // 上界：r=1 ⇒ 系数 1.15（真 Math.random 取不到 1，这里取的是替身的上确界）。
+  const unpinHigh = pinJitter(1);
+  try {
+    const high = await boot({ status: inflight });
+    high.expand();
+    high.flushEffects();
+    await settle();
+    await advance(3449);
+    assert.equal(high.fetches.length, 1, '1.15×3000=3450 之前不响');
+    await advance(1);
+    assert.equal(high.fetches.length, 2, '到点即响 ⇒ 上界恰为 1.15×');
+    high.runtime.unmountAll();
+
+    const idleHigh = await boot({});
+    idleHigh.expand();
+    idleHigh.flushEffects();
+    await settle();
+    await advance(17249);
+    assert.equal(idleHigh.fetches.length, 1, '1.15×15000=17250 之前不响');
+    await advance(1);
+    assert.equal(idleHigh.fetches.length, 2, '到点即响 ⇒ 空闲档上界恰为 1.15×');
+    idleHigh.runtime.unmountAll();
+  } finally {
+    unpinHigh();
+  }
+});
+
+test('A1 ③c：抖动**真实存在**且落在 ±15% 内（不钉随机数 —— 直读定时器的实际时延）', async () => {
+  // ③b 证明的是"边界恰好是 0.85×/1.15×"（靠替身）；这条证明的是**系数真的来自随机数**：
+  // 全程用真 `Math.random`，把 setTimeout 包一层记录产品实际排期的毫秒数。
+  // ★ 为什么必须单独有一条：③b 是**在替身之下**验边界的 —— 它天生看不见"随机数已经被污染"
+  //   （钉上之后真值是什么都无所谓）；③ 只验档位、连抖动都不看。而 T3 抓到的恰恰是
+  //   "Math.random 被上一个用例漏在全局（恒 0 ⇒ 系数恒 0.85）"这类**静默污染**：
+  //   那时 ③b 照旧绿、③ 照旧绿，只有一条**不钉随机数**的用例会红。③c 就是那只金丝雀 ——
+  //   排期退化成常量（恒 15000 / 恒 0.85×）它立刻红（负控实测：两种退化解法各命中 ③c 一次）。
+  const realSetTimeout = globalThis.setTimeout; // 此刻它是 mock.timers 的假 timer，包一层继续调用它
+  const delays = [];
+  globalThis.setTimeout = (fn, ms, ...rest) => {
+    delays.push(ms);
+    return realSetTimeout(fn, ms, ...rest);
+  };
+  try {
+    const app = await boot({});
+    app.expand();
+    app.flushEffects();
+    await settle();
+    // 每轮推进到空闲档 ±15% 的**上界** ⇒ 必定触发且只触发一次（下一轮排期在响应落地后）
+    for (let i = 0; i < 6; i += 1) await advance(17250);
+    assert.ok(delays.length >= 6, `至少记录到 6 次排期（实际 ${delays.length}）`);
+    const lo = Math.round(15000 * 0.85);
+    const hi = Math.round(15000 * 1.15);
+    for (const ms of delays) {
+      assert.ok(ms >= lo && ms <= hi, `${ms}ms 必须落在空闲档 ±15% 区间 [${lo}, ${hi}]（不能更窄也不能更宽）`);
+    }
+    assert.ok(
+      new Set(delays).size > 1,
+      `★ 抖动必须真的存在：连续 ${delays.length} 次排期全是 ${delays[0]}ms ⇒ 随机数没被真正消费`,
+    );
+    app.runtime.unmountAll();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+test('A1 ④：隐藏 ⇒ 0 请求；恢复可见 ⇒ 立即 +1（页面切后台 / hub 隐藏标签页同一判据）', async () => {
+  const app = await boot({});
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 1, '前提：可见时挂载即拉');
+
+  globalThis.document.setVisibility('hidden');
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 1, '切到隐藏的这一刻不该补拉（没人看）');
+  await advance(60_000);
+  assert.equal(app.fetches.length, 1, '★ 隐藏期间 0 请求（定时器已清掉 —— 这是"最小资源"的硬判据）');
+
+  globalThis.document.setVisibility('visible');
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 2, '★ 恢复可见必须立即拉一次（不等档位到期）');
+});
+
+test('A1 ④b：挂载时页面就是隐藏的 ⇒ 首屏一个请求都不发（"看不见就不问"覆盖首屏）', async () => {
+  const app = await boot({});
+  globalThis.document.visibilityState = 'hidden'; // 渲染之前就藏起来
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 0, '★ 首屏不可见 ⇒ 0 请求（不是"先拉一次再说"）');
+  await advance(60_000);
+  assert.equal(app.fetches.length, 0, '隐藏期间始终 0');
+
+  globalThis.document.setVisibility('visible');
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 1, '变可见才拉第一次');
+});
+
+test('A1 ⑤：离开视口（hub 切到别的标签页）⇒ 0 请求；回到视口 ⇒ 立即 +1', async () => {
+  const io = installIntersectionObserver();
+  try {
+    const app = await boot({});
+    const tree = app.expand();
+    app.flushEffects();
+    await settle();
+    assert.equal(io.observers.length, 1, '产品代码必须真的建了观察者');
+    const section = findAll(tree, (n) => n.type === 'section' && String(n.props?.className ?? '').startsWith('dsh-oc-card'))[0];
+    assert.ok(section !== undefined, '卡片根节点必须是 section.dsh-oc-card');
+    assert.equal(io.observers[0].targets[0], section, '★ observe() 收到的必须是卡片根节点（ref 真挂上了）');
+    assert.deepEqual(io.observers[0].options, { threshold: 0 }, '阈值 0：露出一个像素就算"人在看"');
+    assert.equal(app.fetches.length, 1, '在视口里 ⇒ 正常拉');
+
+    io.trigger(false); // hub 切走：面板 hidden ⇒ 元素没有盒
+    app.expand();
+    app.flushEffects();
+    await settle();
+    const after = app.fetches.length;
+    await advance(60_000);
+    assert.equal(app.fetches.length, after, '★ 不在视口 ⇒ 0 请求（隐藏标签页不再空转）');
+
+    io.trigger(true);
+    app.expand();
+    app.flushEffects();
+    await settle();
+    assert.equal(app.fetches.length, after + 1, '★ 回到视口必须立即拉一次');
+  } finally {
+    uninstallIntersectionObserver();
+  }
+});
+
+test('A1 ⑤b：hub 隐藏标签页 + 页面由后台回前台 ⇒ 仍然 0 请求（两个信号不许互相覆盖）', async () => {
+  const io = installIntersectionObserver();
+  try {
+    const app = await boot({});
+    app.expand();
+    app.flushEffects();
+    await settle();
+    assert.equal(app.fetches.length, 1);
+
+    io.trigger(false); // 标签页被切走（卡片仍在挂载，但看不见）
+    app.expand();
+    app.flushEffects();
+    await settle();
+
+    // ★ 关键时序：页面切后台再回前台。若两条可见性信号写同一个 state，"回到前台"会把
+    //   "这个标签页还藏着"覆盖掉 ⇒ 隐藏着的卡片又开始轮询（本用例就是钉这一条）。
+    globalThis.document.setVisibility('hidden');
+    app.expand();
+    app.flushEffects();
+    await settle();
+    globalThis.document.setVisibility('visible');
+    app.expand();
+    app.flushEffects();
+    await settle();
+
+    const after = app.fetches.length;
+    await advance(60_000);
+    assert.equal(app.fetches.length, after, '★ 标签页仍隐藏 ⇒ 依然 0 请求');
+  } finally {
+    uninstallIntersectionObserver();
+  }
+});
+
+test('A1 ⑥：配置快照变化 ⇒ 立即 +1（复用卡里唯一的订阅，不另开第二个）', async () => {
+  const app = await boot({ scopeValue: { enabled: false } });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 1);
+  assert.equal(app.scope.listenerCount(), 1, '前提：卡里只有一条设置订阅');
+
+  await app.scope.set('enabled', true); // 用户拨总闸
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 2, '★ 总闸一变就立刻重拉（用户遇到的正是"开了却还显示旧状态"）');
+  assert.equal(app.scope.listenerCount(), 1, '★ 复用同一条订阅：A1 不许多开订阅');
+
+  await app.scope.set('variant', 'high');
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(app.fetches.length, 3, '改档位同样立即重拉（配置投影也在状态区里）');
+});
+
+test('A1 ⑦：窗口获焦 ⇒ 立即 +1；卸载 ⇒ 清 timer / abort 在途 / 摘监听器 / 退订', async (t) => {
+  const io = installIntersectionObserver();
+  // 假 timer 下"没有请求"不足以证明"定时器被清掉"：cleanup 的 live 闸门会让残留定时器空转
+  // （0 请求仍成立）。要钉住"清掉"这件事本身，就得看 clearTimeout 真被调用。
+  // （这条只 mock 一次 —— 单次 mock 会正常还原；同一用例对同一属性连 mock 两次才会漏替身，见 pinJitter 头注。）
+  const clearSpy = t.mock.method(globalThis, 'clearTimeout');
+  try {
+    const app = await boot({});
+    installFocusSource(); // ⚠️ 必须在 flushEffects 之前装：产品代码是在 effect 里探测该能力
+    app.expand();
+    app.flushEffects();
+    await settle();
+    assert.equal(app.fetches.length, 1);
+
+    globalThis.window.dispatchFocus();
+    app.expand();
+    app.flushEffects();
+    await settle();
+    assert.equal(app.fetches.length, 2, '★ focus ⇒ 立即重拉（用户回到窗口就是要看最新的）');
+
+    const before = app.fetches.length;
+    const clearsBefore = clearSpy.mock.callCount();
+    app.runtime.unmountAll();
+    assert.ok(
+      clearSpy.mock.callCount() > clearsBefore,
+      '★ 卸载必须真的 clearTimeout（残留定时器靠 live 闸门"空转"也能做到 0 请求，但那是漏资源）',
+    );
+    await advance(60_000);
+    assert.equal(app.fetches.length, before, '★ 卸载后不得再有请求（定时器必须清掉）');
+    assert.equal(globalThis.document.listenerCount('visibilitychange'), 0, '卸载必须摘掉 visibilitychange 监听器');
+    assert.equal(globalThis.window.focusListenerCount(), 0, '卸载必须摘掉 focus 监听器');
+    assert.equal(app.scope.listenerCount(), 0, '卸载必须退订设置快照');
+    assert.equal(io.observers[0].disconnected, true, '卸载必须断开 IntersectionObserver');
+  } finally {
+    uninstallIntersectionObserver();
+  }
+});
+
+test('A1 ⑦b：卸载 ⇒ 在途请求被 abort（不是只把标志位置 false）', async () => {
+  const sent = [];
+  const app = await boot({
+    fetchImpl: async (url, options) => {
+      sent.push({ url, options });
+      return new Promise(() => {}); // 永不 settle：请求一直挂在"在途"
+    },
+  });
+  app.expand();
+  app.flushEffects();
+  assert.equal(sent.length, 1, '前提：请求已发出且在途');
+  assert.equal(sent[0].options.signal.aborted, false);
+  app.runtime.unmountAll();
+  assert.equal(sent[0].options.signal.aborted, true, '★ 卸载必须 abort 在途请求（真机上否则会留一个没人要的响应）');
+});
+
+test('A1 ⑧：同一时刻只允许一个在途请求（请求悬挂时推进时间不再发）', async () => {
+  let calls = 0;
+  const app = await boot({
+    fetchImpl: async () => {
+      calls += 1;
+      return new Promise(() => {}); // 永不 settle：链上没有"下一次"可排
+    },
+  });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(calls, 1, '前提：第一次请求已发出');
+  await advance(60_000);
+  assert.equal(calls, 1, '★ 在途未落地 ⇒ 不叠第二个请求（串行链 + 显式闸门）');
+});
+
+test('A1 ⑨：拉取失败照旧进 failure，且仍按档位重试（按钮已删 ⇒ 不许一次抖动就自锁死）', async () => {
+  const unpin = pinJitter(0.5); // 失败走空闲档 ⇒ 15000ms
+  try {
+    let calls = 0;
+    const results = [
+      { ok: false, status: 500, json: async () => ({}) },
+      { ok: true, status: 200, json: async () => statusPayload({ registry: 'REGISTERED' }) },
+    ];
+    const app = await boot({
+      fetchImpl: async () => {
+        const next = results[Math.min(calls, results.length - 1)];
+        calls += 1;
+        return next;
+      },
+    });
+    app.expand();
+    app.flushEffects();
+    await settle();
+    assert.ok(mainText(app.expand()).includes('状态读取失败：status HTTP 500'), '★ 失败必须显式上屏（非 2xx 抛错语义不变）');
+    await advance(15_000);
+    assert.equal(calls, 2, '★ 失败后仍要按档位重试（否则卡片会永久停在错误态，而用户手里没有刷新按钮了）');
+    assert.ok(mainText(app.expand()).includes('● 已启动'), '恢复后必须回到正常态');
+  } finally {
+    unpin();
+  }
+});
+
+test('A1 ⑩ 能力探测：无 IntersectionObserver / 无事件面 ⇒ 退化为"始终可见"，照常拉、不抛错', async () => {
+  const unpin = pinJitter(0.5);
+  try {
+    const bare = makeFakeDocument(); // 没有 visibilityState / addEventListener 的老宿主形状
+    const app = await boot({ documentFake: bare });
+    app.expand();
+    assert.doesNotThrow(() => app.flushEffects(), '能力缺失必须靠 typeof 守卫绕过，不许抛');
+    await settle();
+    assert.equal(app.fetches.length, 1, '没有观测能力 ⇒ 按可见处理（不把"观测不了"当"看不见"）');
+    await advance(15_000);
+    assert.equal(app.fetches.length, 2, '退化行为是"照常轮询"，不是"冻住"');
+  } finally {
+    unpin();
+  }
 });
 
 // ───────────────────────── 判据④：任务块（在途 + 最近一轮下发） ─────────────────────────

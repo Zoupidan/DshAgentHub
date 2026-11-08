@@ -34,8 +34,12 @@
  *
  * ⚠️ [待验] 真机 React 渲染 / slot dispatch / 设置写穿透到 host 落盘（受控窗口 W-11）——
  *    本文件级验收以 test/client.test.js 的伪宿主断言到注册与浅渲染层。
- * ⚠️ [待验] 桌面端 GUI 对"经 API 新建的会话"是否自动刷新 —— 本卡片**不假装**有实时性：
- *    只在挂载与手动「刷新状态」时拉 ROUTE_STATUS。
+ * ★ 状态实时性（2026-10-18 · A1 方案，用户批准；**纯客户端**，host 一行不改）：
+ *   卡上已无手动「刷新状态」入口 —— 状态由客户端自动刷新（事件触发立即拉 + 可见期兜底档位，
+ *   判据与档位见下文「A1 自动刷新」一节）。这里**不假装**有推送：一切都落在同源 ROUTE_STATUS
+ *   的真实拉取上，且看不见就一次都不拉。
+ * ⚠️ [待验] 桌面端 GUI 对"经 API 新建的会话"是否自动刷新 —— 本卡片**不消费**该行为：
+ *   重拉时机只按"人在不在看"判定，服务端返回什么就显示什么。
  * ⚠️ [待验] `variant.source` 的真机取值域（'service' / 'config' / 'unavailable:<reason>' / 'pending:<reason>'，
  *    见 src/host/routes/status/get.js 的 variantCapability）—— 本卡片**不消费**它（只消费 values），
  *    等受控窗口里对过真机载荷再决定是否可视化。
@@ -59,7 +63,8 @@ window.__ModuleLoader__.load({
     //   （`…Artwork` 是内部实现、`…14` 只是它自己的 size 默认值 —— 写 `…14` 会让
     //   `h(undefined)` 在渲染期抛错，被宿主 SlotErrorBoundary 吞成一张全白的卡片，见 WorkBuddy 事故复盘）。
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
-    const { createElement: h, useEffect, useState } = React;
+    // useRef：A1 自动刷新要拿卡片根节点当 IntersectionObserver 的观察对象（见「A1 自动刷新」）。
+    const { createElement: h, useEffect, useRef, useState } = React;
     const IconChevronDownOutlineRegular = primitives.IconChevronDownOutlineRegular;
 
     // ───────────────────── 常量（与 src/shared/constants.js 同步；bundle 不能 import 它） ─────────────────────
@@ -229,7 +234,7 @@ window.__ModuleLoader__.load({
             /** 原始读数两行（本包故意上主视图；见文件头"两处故意差异"）。 */
             registryPrefix: '注册：',
             probeReasonPrefix: '探测结论：',
-            serviceMissing: '本机没找到可用的 OpenCode 服务（service.json 未命中或已失效）—— 先启动 OpenCode 桌面端，再点刷新。',
+            serviceMissing: '本机没找到可用的 OpenCode 服务（service.json 未命中或已失效）—— 先启动 OpenCode 桌面端，本卡会自动重拉。',
             diagnosticsSummary: '诊断信息（排障用，默认收起）',
           },
           /** 诊断折叠内部行。 */
@@ -242,8 +247,6 @@ window.__ModuleLoader__.load({
           },
           /** 卡片外壳与操作面。 */
           shell: {
-            refresh: '刷新状态',
-            refreshHint: '重新拉取运行状态（不改配置）',
             collapse: '收起设置',
             expand: '展开设置',
             /** 无 scope 兜底（configForms.get 返回空时）—— 不写宿主服务名，用户查不到这个符号。 */
@@ -413,6 +416,39 @@ window.__ModuleLoader__.load({
       return error instanceof Error ? error.message : String(error);
     }
 
+    // ───────────────────────── A1 自动刷新（2026-10-18） ─────────────────────────
+    //
+    // 用户口径：卡上那个「刷新状态」按钮删掉，改由客户端自动刷新 —— 最小资源占用下最快识别。
+    // 方案 A1 = **纯客户端**（host 一行不改）：状态路由照旧按需拉，改的只有"什么时候拉"。
+    // 三条纪律（每条在下文都有落点，别凭直觉改；改了先回来看这里）：
+    //   ① **看不见就不问** —— 卡片不在视口里（hub 会把访问过的标签页留在 DOM 里但加 `hidden`，
+    //      元素没有盒 ⇒ IntersectionObserver 报 isIntersecting:false）、页面被切到后台、
+    //      组件卸载 ⇒ **0 请求**：轮询链断掉、timer 清掉、在途请求 abort。
+    //      这不是"拉得慢一点"，是"一次都不拉"。
+    //   ② **人一动就立刻看见** —— 进入视口 / 页面重新可见 / 窗口重新获焦 / 配置快照变化
+    //      （总闸、模型、档位…）⇒ 立即重拉一次，不等档位到期：用户刚拨的开关必须马上有回音。
+    //   ③ **闲着就懒** —— 可见期间的兜底档位只有一个 if：载荷 `inFlight` 非空 ⇒ 3s，否则 15s；
+    //      两者都带 ±15% 抖动，两张卡（WorkBuddy / OpenCode）相邻时不会永远同拍。
+    // 为什么不改 host：用户已否决"服务端定时轮询/304"那条路 —— 那是"没人看也在跑"的常驻开销，
+    // 与"最小资源"正相反。本包的 host 侧一行不改（任务板 T2 契约）。
+    /** 可见期间的兜底档位：有在途 ⇒ 追得紧；闲着 ⇒ 省着问。 */
+    const POLL_BUSY_MS = 3000;
+    const POLL_IDLE_MS = 15000;
+
+    /** 档位抖动系数 0.85–1.15（±15%）：防两卡同拍，也让轮询不呈现机器的等周期。 */
+    function pollJitter(base) {
+      return Math.round(base * (0.85 + Math.random() * 0.3));
+    }
+
+    /**
+     * 页面是否隐藏。**能力探测口径**：`document` 缺席（Node 侧）/ 没有 `visibilityState`
+     * （老宿主、测试台）⇒ 按**可见**处理 —— 不把"观测不了"当成"看不见"，
+     * 否则卡片会静默冻在骨架态，而用户手里已经没有刷新按钮了。
+     */
+    function pageHidden() {
+      return typeof document !== 'undefined' && document !== null && document.visibilityState === 'hidden';
+    }
+
     /** 数值 → 显示字符串（非有限数 ⇒ ''，调用方据此走"未知"分支，不谎报 0）。 */
     function formatTime(ms) {
       if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
@@ -495,10 +531,6 @@ window.__ModuleLoader__.load({
       '.dsh-oc-block-title{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:500;line-height:1.5}' +
       '.dsh-oc-task{display:flex;flex-direction:column;gap:5px}' +
       '.dsh-oc-group{display:flex;flex-direction:column;gap:10px}' +
-      '.dsh-oc-card__actions{display:flex;justify-content:flex-end}' +
-      '.dsh-oc-card__refresh{appearance:none;border:0;background:0 0;font:inherit;font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-state-business-primary);cursor:pointer;padding:4px 8px;border-radius:6px;transition:background-color .15s}' +
-      '.dsh-oc-card__refresh:hover{background:var(--dsw-alias-interactive-bg-hover)}' +
-      '.dsh-oc-card__refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}' +
       '.dsh-oc-skeleton{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}' +
       '.dsh-oc-toast{display:flex;align-items:center;gap:8px;border-radius:8px;padding:8px 10px;background:var(--dsw-alias-fill-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-state-warn-primary);font-size:13px;line-height:1.5;cursor:pointer}' +
       '.dsh-oc-badge{flex:none;padding:1px 8px;border-radius:999px;white-space:nowrap;background:var(--dsw-alias-fill-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6}' +
@@ -997,37 +1029,140 @@ window.__ModuleLoader__.load({
     const makeConfigCard = (scope) => function ConfigCard(props) {
       void props;
       const [snap, setSnap] = useState(() => (scope ? scope.getSnapshot() : { status: 'unavailable', value: undefined, writable: false }));
-      useEffect(() => (scope ? scope.subscribe(() => setSnap(scope.getSnapshot())) : undefined), [scope]);
 
       const [status, setStatus] = useState(null);
       const [failure, setFailure] = useState('');
-      const [refreshNonce, setRefreshNonce] = useState(0);
+      /** 卡片根节点：IntersectionObserver 的观察对象（"看不见就不问"的判据载体）。 */
+      const rootRef = useRef(null);
+      /**
+       * 两个可见性信号**分开存**（视口内 / 页面可见），合成为 `onScreen` 再进轮询链的 deps。
+       * ★ 为什么不能合成一个 state（两个来源都写同一格）：hub 会把访问过的标签页留在 DOM 里
+       *   但加 `hidden`（display:none）。若可见性回调直接写同一个 state，"页面由后台回到前台"
+       *   就会把"这个标签页其实还藏着"这件事**覆盖掉** ⇒ 一张看不见的卡片又开始轮询。
+       *   分开存 ⇒ 各自的回调只写自己那一位，两个都成立才算"人在看"。
+       * ★ 初值一律 true：能力探测失败时退化为"始终可见"（见「A1 自动刷新」①）。
+       */
+      const [inViewport, setInViewport] = useState(true);
+      const [pageVisible, setPageVisible] = useState(() => !pageHidden());
+      /** 立即重拉信号：focus / 配置变化 ⇒ 自增 ⇒ 轮询链重臂并立刻拉一次。 */
+      const [pollNonce, setPollNonce] = useState(0);
+      const onScreen = inViewport && pageVisible;
+
+      /**
+       * 快照订阅 —— **卡里唯一的 settings 订阅**（A1 的"配置变化 ⇒ 立即重拉"复用这一条，
+       * 不另开第二个订阅）：设置一改（总闸/模型/档位/等待上限…）就 bump `pollNonce`，
+       * 轮询链重臂并立刻拉一次 —— 用户拨完开关马上看到服务端回音，而不是等下一个档位到期。
+       */
+      useEffect(
+        () =>
+          (scope
+            ? scope.subscribe(() => {
+              setSnap(scope.getSnapshot());
+              setPollNonce((n) => n + 1);
+            })
+            : undefined),
+        [scope],
+      );
+
+      // ① 在视口里吗？hub 的另一个标签页是 `hidden`（display:none ⇒ 元素没有盒）⇒ isIntersecting
+      //    为 false，所以这一条同时覆盖"标签页被切走"。没有 IntersectionObserver 的宿主
+      //    （老浏览器 / Node 侧 / 测试台）**整条跳过**，初值 true 保持 ⇒ 退化行为是"照常轮询"，
+      //    不是"冻住"。
+      useEffect(() => {
+        const el = rootRef.current;
+        if (typeof IntersectionObserver !== 'function' || el === null || el === undefined) return undefined;
+        const io = new IntersectionObserver((entries) => {
+          // 批量记录里最新状态在末尾（真机一次可能带来多条）⇒ 取最后一条，不"有真就真"。
+          const last = entries.length > 0 ? entries[entries.length - 1] : null;
+          if (last !== null) setInViewport(last.isIntersecting === true);
+        }, { threshold: 0 });
+        io.observe(el);
+        return () => io.disconnect();
+      }, []);
+
+      // ② 页面级可见性：整个设置页被切到后台时元素仍在视口里，但没人看 —— 也要停。
+      useEffect(() => {
+        const doc = typeof document !== 'undefined' && document !== null ? document : null;
+        if (doc === null || typeof doc.addEventListener !== 'function') return undefined;
+        const sync = () => setPageVisible(!pageHidden());
+        sync(); // 挂载时对齐一次真实状态（渲染期算出的初值只够兜底"没有这个能力"的宿主）
+        doc.addEventListener('visibilitychange', sync);
+        return () => {
+          if (typeof doc.removeEventListener === 'function') doc.removeEventListener('visibilitychange', sync);
+        };
+      }, []);
+
+      // ③ 窗口重新获焦 ⇒ 立即一次（用户回到窗口就是要看最新的，不该等档位到期）。
+      useEffect(() => {
+        const win = typeof window !== 'undefined' && window !== null ? window : null;
+        if (win === null || typeof win.addEventListener !== 'function') return undefined;
+        const onFocus = () => setPollNonce((n) => n + 1);
+        win.addEventListener('focus', onFocus);
+        return () => {
+          if (typeof win.removeEventListener === 'function') win.removeEventListener('focus', onFocus);
+        };
+      }, []);
+
+      /**
+       * ④ 状态轮询链（A1 的正身）。
+       *
+       * 形状：可见才起链；每条链**先拉一次**，拉完按收到的载荷选档位、排下一次；档位到期再拉。
+       * 不可见 / 卸载 / 重臂 ⇒ cleanup 把链断干净（`live=false` + 清 timer + abort 在途），
+       * 于是"不可见 ⇒ 0 请求"是结构性成立的，而不是靠某个标志位在回调里 early-return 兜出来的。
+       *
+       * deps `[scope, onScreen, pollNonce]`：任一变化 ⇒ cleanup 先跑（旧链断掉）再重臂 ⇒ 立即拉一次。
+       * 这三样恰好对应三类"要立刻看见"的事：设置面就绪、人开始看 / 停止看、人动了设置或回到窗口。
+       */
+      useEffect(() => {
+        // 不可见 ⇒ 不建链（0 请求、0 timer）。`onScreen` 是异步收敛的 state，这里再按**地面真值**
+        // 兜一道：render 与 effect 之间页面被切走的那一下，state 还没来得及翻。
+        if (!scope || !onScreen || pageHidden()) return undefined;
+        let live = true;
+        let timer = null;
+        let controller = null;
+        const arm = (busy) => {
+          if (!live) return;
+          timer = setTimeout(() => { void tick(); }, pollJitter(busy ? POLL_BUSY_MS : POLL_IDLE_MS));
+        };
+        const tick = async () => {
+          // 同一时刻只允许一个在途请求。串行链本身已保证（下一次只在响应落地后才 arm），
+          // 这里再立一道显式闸门 —— 把契约写进代码，而不是只写在注释里。
+          if (!live || controller !== null) return;
+          const local = new AbortController();
+          controller = local;
+          let busy = false;
+          try {
+            const payload = await fetchStatus(local.signal);
+            // 过期/被中止的响应不写状态（重臂竞态下旧的响应会盖掉新的）。
+            if (!live || local.signal.aborted) return;
+            setStatus(payload);
+            setFailure('');
+            // 档位判据只看**这一次**载荷（拿 state 判会晚一拍，还会把 status 拖进 deps 形成回环）。
+            busy = Array.isArray(payload.inFlight) && payload.inFlight.length > 0;
+          } catch (error) {
+            if (!live || local.signal.aborted) return;
+            setFailure(errorText(error));
+            // ★ 失败**照旧排下一次**（走空闲档）：按钮已删，若一次抖动就停摆，卡片会永久停在
+            //   "状态读取失败"上而没人能救它。失败时无从知道有没有在途 ⇒ 不冒进，按空闲档重试。
+          } finally {
+            controller = null;
+          }
+          arm(busy);
+        };
+        void tick();
+        return () => {
+          // 不可见 / 卸载 / 重臂：链断干净 —— 清 timer + abort 在途（旧响应绝不回写）。
+          live = false;
+          if (timer !== null) clearTimeout(timer);
+          if (controller !== null) controller.abort();
+        };
+      }, [scope, onScreen, pollNonce]);
+
       // 收纳语义沿用宿主惯例：状态 null = "用户尚未表态" ⇒ 落到本区默认值（本卡是主内容 ⇒ 默认展开）。
       const [open, setOpen] = useState(null);
       const effectiveOpen = open ?? true;
       // 写失败/非法输入的 Toast：点按关闭；成功写入不碰它。
       const [toast, setToast] = useState('');
-      // [待验] 卡片的实时性：只在挂载 + 手动刷新时拉一次（不轮询；桌面端对 API 新建会话的
-      // 自动刷新行为未在真机核对过，所以这里也不假装"会被推送"）。
-      useEffect(() => {
-        if (!scope) return undefined;
-        let live = true;
-        const controller = new AbortController();
-        fetchStatus(controller.signal)
-          .then((payload) => {
-            if (!live) return;
-            setStatus(payload);
-            setFailure('');
-          })
-          .catch((error) => {
-            // 过期/被中止的请求不写失败（刷新竞态下旧的失败会盖掉新的成功）。
-            if (live && !controller.signal.aborted) setFailure(errorText(error));
-          });
-        return () => {
-          live = false;
-          controller.abort();
-        };
-      }, [scope, refreshNonce]);
 
       if (!scope) {
         return h('div', { className: 'dsh-oc-card' }, L.shell.scopeMissing);
@@ -1163,26 +1298,12 @@ window.__ModuleLoader__.load({
             }),
           ]),
           h(StatusBlock, { key: 'status', snap, status, failure }),
-          // ④ 操作区："刷新状态"只重拉状态区（按钮 title 明确说不碰配置）。
-          h('div', { className: 'dsh-oc-card__actions', key: 'actions' }, [
-            h(
-              'button',
-              {
-                className: 'dsh-oc-card__refresh',
-                key: 'refresh',
-                type: 'button',
-                title: L.shell.refreshHint,
-                onClick: () => {
-                  setFailure('');
-                  setRefreshNonce((n) => n + 1);
-                },
-              },
-              L.shell.refresh,
-            ),
-          ]),
         ]);
 
-      return h('section', { className: 'dsh-oc-card' + (effectiveOpen ? ' dsh-oc-card--open' : '') }, [
+      // ★ ref 只挂在卡片根节点上：IntersectionObserver 观察的就是它（见「A1 自动刷新」①）。
+      //   真机 React 在 commit 阶段把 ref.current 指向 DOM 节点，effect 里读得到；
+      //   scope 缺席的降级分支不挂（那条路径压根不起轮询链）。
+      return h('section', { className: 'dsh-oc-card' + (effectiveOpen ? ' dsh-oc-card--open' : ''), ref: rootRef }, [
         h('header', { className: 'dsh-oc-card__head', key: 'head' }, [
           h(
             'button',

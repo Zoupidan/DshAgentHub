@@ -21,8 +21,10 @@
  *     ③ 配置（`dsh-wb-group`）：开关 + 模型（搜索 + 按倍率分组）+ 推理强度（6 档，不含 off）；
  *     ④ 状态（`StatusBlock`）：积分（单位中文化）+ 列表来源 + 诊断折叠。
  *   折叠纪律：`registrationError` / 旗标名（`--model` 之类）/ 退出码 / 本机路径 / 各类 id
- *   **只进折叠**，主视图只留人话。加载态是**单个骨架**（`dsh-wb-skeleton`），写失败走 Toast，
- *   "刷新状态"只重拉状态区（按钮带说明，不碰配置）。
+ *   **只进折叠**，主视图只留人话。加载态是**单个骨架**（`dsh-wb-skeleton`），写失败走 Toast。
+ *   ★ 2026-10-18（A1）：原来那枚「刷新状态」按钮已删除 —— 状态改由客户端**自动刷新**
+ *     （进入视口 / 回到窗口 / 配置变化立即拉；可见期间在途 3s、空闲 15s 兜底；不可见 0 请求）。
+ *     见 POLL_BUSY_MS / POLL_IDLE_MS 与轮询 effect 处的说明。
  *
  * 形态依据（全部为本机 dsh 安装体只读实测，逐字）：
  *   - 加载形态 `window.__ModuleLoader__.load({ id, factory })`：官方产物
@@ -64,7 +66,7 @@ window.__ModuleLoader__.load({
     // SlotErrorBoundary（dsh-client-ui-renderer/lib/client.js:611-625）吞掉并渲染成空的 div[data-slot-error]，
     // 这正是"能看到设置项，但是里面空白"的成因。
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
-    const { createElement: h, useEffect, useState } = React;
+    const { createElement: h, useEffect, useRef, useState } = React;
     // dsh 自身用法一律是 `jsx(IconChevronDownOutlineRegular, { className })`，从不传 size（默认 14 由 Artwork 兜底）。
     const IconChevronDownOutlineRegular = primitives.IconChevronDownOutlineRegular;
 
@@ -293,9 +295,6 @@ window.__ModuleLoader__.load({
           },
           /** 卡片外壳与命令面。 */
           shell: {
-            refresh: '刷新状态',
-            /** 刷新按钮的悬停说明：明确它只重拉状态，不碰配置。 */
-            refreshHint: '重新拉取运行状态（不改配置）',
             collapse: '收起设置',
             expand: '展开设置',
             // ★ 不写宿主服务名（`configForms` / `settingsScope`）：用户查不到这个符号，只会以为是坏了。
@@ -337,6 +336,32 @@ window.__ModuleLoader__.load({
 
     /** 状态 bridge 路由（§3.4.1 之 ⑤；host 侧由 T02 的 makeStatusRoute 注册）。 */
     const ROUTE_STATUS = '/plugin-workbuddy/status';
+
+    // ───────────────────────── A1 自动刷新（2026-10-18） ─────────────────────────
+    //
+    // 用户口径（原话）：「不要这个状态刷新按钮了，后台自动刷新，你看下怎么做好一点，最小资源占用
+    // 的情况下最快识别。」方案 A1 = **纯客户端**，host 一行不改。三条纪律：
+    //   ① **看不见就不问** —— 卡片不在视口里（hub 的另一个标签页是 `hidden` ⇒ 元素没有盒 ⇒
+    //      IntersectionObserver 报 `isIntersecting:false`）、页面隐藏、组件卸载 ⇒ **0 请求**
+    //      （定时器清掉、在途请求 abort），而不是"拉得慢一点"；
+    //   ② **用户动过的立即看见** —— 进入视口 / `visibilitychange` 变可见 / 窗口 `focus` /
+    //      配置快照变化（总闸、模型、强度…）都立刻拉一次，不等下一个档位到期；
+    //   ③ **闲着就懒** —— 兜底档位只有一个 if：有在途（`payload.inFlight` 非空）⇒ 3s，
+    //      否则 15s；都带 ±15% 抖动，两张卡相邻时不会永远同拍。
+    // 为什么不走 host：用户明确否决了改 host 的方案（304/后台定时器）——后者会变成"没人看也在跑"
+    // 的常驻开销，与"最小资源"正相反。
+    const POLL_BUSY_MS = 3000;
+    const POLL_IDLE_MS = 15000;
+
+    /** 档位抖动系数 0.85–1.15（±15%）：防两卡同拍，也让轮询不呈现机器的等周期。 */
+    function pollJitter(base) {
+      return Math.round(base * (0.85 + Math.random() * 0.3));
+    }
+
+    /** 页面是否隐藏（`document` 缺席 / 无该字段 ⇒ 按**可见**处理：不因宿主少给字段就误停轮询）。 */
+    function pageHidden() {
+      return typeof document !== 'undefined' && document !== null && document.visibilityState === 'hidden';
+    }
 
     /**
      * canonical 7 档（§4.2.1 矩阵左列；不支持档由 values 表缺 key 表达 —— 不发明映射）。
@@ -563,8 +588,9 @@ window.__ModuleLoader__.load({
     //   用户的三个真问题各有各的"看得见"方式，所以版式改成**四段节奏**而不是等权行堆叠：
     //     ① `.dsh-wb-task`    任务块 —— 对话标题 + 回执 + 在途，失败人话主视图、编号证据进折叠；
     //     ② `.dsh-wb-group`   配置组 —— 启用/模型/推理强度，等距栅格，一眼扫完；
-    //     ③ `.dsh-wb-card__status` 诊断区 —— 积分（独立成块、全卡唯一大字）+ 来源 + 诊断折叠；
-    //     ④ `.dsh-wb-card__actions` 操作区 —— "刷新状态"只作用于状态，就放在状态下面。
+    //     ③ `.dsh-wb-card__status` 诊断区 —— 积分（独立成块、全卡唯一大字）+ 来源 + 诊断折叠。
+    //   （2026-10-18：原来的 ④ `.dsh-wb-card__actions` 操作区随"刷新状态"按钮一起删除 ——
+    //     状态改由客户端自动刷新，见 POLL_BUSY_MS / POLL_IDLE_MS 处的说明。）
     //   收起态则退成**一行**：名称在左、三值摘要（模型 · 强度 · 积分）在右。
     //
     // ★ 两个真实缺陷（token 名写错 ⇒ 一直走 fallback，深浅色主题下颜色不受控）：
@@ -599,10 +625,6 @@ window.__ModuleLoader__.load({
       '.dsh-wb-block-title{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:500;line-height:1.5}' +
       '.dsh-wb-task{display:flex;flex-direction:column;gap:5px}' +
       '.dsh-wb-group{display:flex;flex-direction:column;gap:10px}' +
-      '.dsh-wb-card__actions{display:flex;justify-content:flex-end}' +
-      '.dsh-wb-card__refresh{appearance:none;border:0;background:0 0;font:inherit;font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-state-business-primary);cursor:pointer;padding:4px 8px;border-radius:6px;transition:background-color .15s}' +
-      '.dsh-wb-card__refresh:hover{background:var(--dsw-alias-interactive-bg-hover)}' +
-      '.dsh-wb-card__refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}' +
       // 加载骨架：载荷未到达时的**唯一**占位（一行 tertiary，不伪装成任何具体内容）。
       '.dsh-wb-skeleton{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}' +
       // 写失败 Toast：警告级底纹 + 警告字色，点按关闭（role=alert，无障碍树可达）。
@@ -1564,11 +1586,43 @@ window.__ModuleLoader__.load({
     const makeConfigCard = (scope) => function ConfigCard(props) {
       void props;
       const [snap, setSnap] = useState(() => (scope ? scope.getSnapshot() : { status: 'unavailable', value: undefined, writable: false }));
-      useEffect(() => (scope ? scope.subscribe(() => setSnap(scope.getSnapshot())) : undefined), [scope]);
-
       const [status, setStatus] = useState(null);
       const [failure, setFailure] = useState('');
-      const [refreshNonce, setRefreshNonce] = useState(0);
+      /** 卡片根节点：IntersectionObserver 的观察对象（"看不见就不问"的判据载体）。 */
+      const rootRef = useRef(null);
+      /** 在视口里吗（IO 判定；无 IO 能力的宿主/测试台恒 true）。 */
+      const [inViewport, setInViewport] = useState(true);
+      /** 页面可见吗（`document.visibilityState`；无该能力的宿主/测试台恒 true）。 */
+      const [pageVisible, setPageVisible] = useState(() => !pageHidden());
+      /**
+       * ★★ 两条信号**分开存、相乘用**（2026-10-18 · T2 交叉审查抓到的真缺陷）★★
+       *   旧写法是**一格 state**：IO 回调写 `setOnScreen(hit && !pageHidden())`、
+       *   visibilitychange 回调写 `setOnScreen(!pageHidden())`。于是"设置页切后台再切回来"时，
+       *   后者会把"这个 hub 标签页其实还 hidden"这一半**覆盖**掉 —— 元素仍是 display:none，
+       *   而 IO 不会再回调（相交状态没变）⇒ 隐藏着的卡片恢复空转轮询。
+       *   分开存以后，每条信号只改自己那一半，合成的 `onScreen` 不可能被单边覆盖。
+       */
+      const onScreen = inViewport && pageVisible;
+      /** 立即重拉的信号：focus / 配置变化 ⇒ 自增 ⇒ 轮询 effect 重臂并立刻拉一次。 */
+      const [pollNonce, setPollNonce] = useState(0);
+
+      /**
+       * ★ 快照订阅（A1 ②）：配置一变（总闸、模型、强度…）就**立刻**重拉 —— 这正是用户遇到的时序：
+       *   先打开设置页、再开总闸，卡片却还写着旧的「未开启」；旧实现只在挂载时拉一次，
+       *   而 hub 的标签页是**保留挂载**的（切走只 hidden）⇒ 不刷新永远是旧快照。
+       * ★ 它必须排在**所有 state 声明之后**（2026-10-18 · T3 验收补强）：回调里引用 `setPollNonce`，
+       *   旧写法把这条 effect 排在 pollNonce 声明之前 —— 之所以没炸，是因为 `scope.subscribe`
+       *   （dsh-client-store 的 zustand subscribeWithSelector）**不会同步回调**。那是"靠外部约定成立"
+       *   的写法：宿主哪天换成"订阅即回调"的 store，这里会当场 ReferenceError。声明在前、订阅在后，
+       *   这层依赖就不存在了（与 OpenCode 侧同序）。
+       */
+      useEffect(() => {
+        if (!scope) return undefined;
+        return scope.subscribe(() => {
+          setSnap(scope.getSnapshot());
+          setPollNonce((n) => n + 1);
+        });
+      }, [scope]);
       // 收纳语义沿用宿主自身惯例（dsh-client-ui-settings-plugin-inventory/lib/client.js:290,339-340）：
       // 状态 `null` = "用户尚未表态" ⇒ 落到本区默认值。官方对**主内容**用 `?? true`，对次级分组用 `?? false`。
       // 本卡是该设置页的唯一内容，属主内容 ⇒ 默认展开；用户点一次即收起。
@@ -1578,24 +1632,78 @@ window.__ModuleLoader__.load({
       const [modelQuery, setModelQuery] = useState('');
       // 写失败 Toast：`scope.set` 被拒时如实说出来（点按关闭）。成功写入不碰它。
       const [toast, setToast] = useState('');
+      // ① 在视口里吗？hub 的另一个标签页是 `hidden`（display:none ⇒ 元素没有盒）⇒ isIntersecting
+      //    为 false，所以这一条同时覆盖"标签页被切走"。没有 IntersectionObserver 的宿主
+      //    （或测试台）保持 onScreen=true，退化行为是"照常轮询"，不是"冻住"。
       useEffect(() => {
-        if (!scope) return undefined;
+        const el = rootRef.current;
+        if (typeof IntersectionObserver !== 'function' || el === null || el === undefined) return undefined;
+        const io = new IntersectionObserver((entries) => {
+          // ★ 只写自己那一半（`inViewport`）—— 不去动 `pageVisible`：单边覆盖是 T2 抓到的那处缺陷。
+          setInViewport(entries.some((entry) => entry.isIntersecting === true));
+        }, { threshold: 0 });
+        io.observe(el);
+        return () => io.disconnect();
+      }, []);
+
+      // ② 页面级可见性：整个设置页被切到后台时元素还在视口里，但没人看 —— 也要停。
+      useEffect(() => {
+        const doc = typeof document !== 'undefined' && document !== null ? document : null;
+        if (doc === null || typeof doc.addEventListener !== 'function') return undefined;
+        // ★ 同理只写 `pageVisible`：切回前台**不得**把"这个 hub 标签页仍隐藏"judgment 覆盖掉。
+        const onChange = () => setPageVisible(!pageHidden());
+        doc.addEventListener('visibilitychange', onChange);
+        return () => {
+          if (typeof doc.removeEventListener === 'function') doc.removeEventListener('visibilitychange', onChange);
+        };
+      }, []);
+
+      // ③ 窗口重新获得焦点 ⇒ 立刻一次（用户回到窗口就是要看最新的，不该等档位到期）。
+      useEffect(() => {
+        const win = typeof window !== 'undefined' && window !== null ? window : null;
+        if (win === null || typeof win.addEventListener !== 'function') return undefined;
+        const onFocus = () => setPollNonce((n) => n + 1);
+        win.addEventListener('focus', onFocus);
+        return () => {
+          if (typeof win.removeEventListener === 'function') win.removeEventListener('focus', onFocus);
+        };
+      }, []);
+
+      // ④ 状态轮询链（A1 的正身）：可见才起链；每轮拉完按档位排下一次；不可见/卸载 ⇒ 链断、
+      //    timer 清掉、在途请求 abort —— "0 请求"是纪律本身，不是"拉得慢一点"。
+      //    deps 里的 onScreen / pollNonce 变化 ⇒ cleanup 先跑（旧链断干净）再重臂 ⇒ 立即拉一次。
+      useEffect(() => {
+        if (!scope || !onScreen) return undefined;
         let live = true;
-        const controller = new AbortController();
-        fetchStatus(controller.signal)
-          .then((payload) => {
+        let timer = null;
+        let controller = null;
+        const arm = (payload) => {
+          if (!live) return;
+          const busy = payload !== null && payload !== undefined
+            && Array.isArray(payload.inFlight) && payload.inFlight.length > 0;
+          timer = setTimeout(() => { void tick(); }, pollJitter(busy ? POLL_BUSY_MS : POLL_IDLE_MS));
+        };
+        const tick = async () => {
+          controller = new AbortController();
+          try {
+            const payload = await fetchStatus(controller.signal);
             if (!live) return;
             setStatus(payload);
             setFailure('');
-          })
-          .catch((error) => {
-            if (live && !controller.signal.aborted) setFailure(errorText(error));
-          });
+            arm(payload);
+          } catch (error) {
+            if (!live || controller.signal.aborted) return;
+            setFailure(errorText(error));
+            arm(null);
+          }
+        };
+        void tick();
         return () => {
           live = false;
-          controller.abort();
+          if (timer !== null) clearTimeout(timer);
+          if (controller !== null) controller.abort();
         };
-      }, [scope, refreshNonce]);
+      }, [scope, onScreen, pollNonce]);
 
       if (!scope) {
         return h('div', { className: 'dsh-wb-card' }, L.shell.scopeMissing);
@@ -1735,27 +1843,11 @@ window.__ModuleLoader__.load({
             }),
           ]),
           h(StatusBlock, { key: 'status', snap, status, failure }),
-          // ④ 操作区："刷新状态"重拉的正是状态块的内容，所以贴着状态放（原先吊在内容区顶上，
-          //   视觉上像"整张卡的刷新"，实际只管状态区）。悬停说明写清"不改配置"。
-          h('div', { className: 'dsh-wb-card__actions', key: 'actions' }, [
-            h(
-              'button',
-              {
-                className: 'dsh-wb-card__refresh',
-                key: 'refresh',
-                type: 'button',
-                title: L.shell.refreshHint,
-                onClick: () => {
-                  setFailure('');
-                  setRefreshNonce((n) => n + 1);
-                },
-              },
-              L.shell.refresh,
-            ),
-          ]),
+          // （2026-10-18）原来的 ④ 操作区随"刷新状态"按钮一起删除：状态改由客户端自动刷新 ——
+          //   进入视口 / focus / 配置变化立即拉，可见期间按在途 3s、空闲 15s 兜底。
         ]);
 
-      return h('section', { className: 'dsh-wb-card' + (effectiveOpen ? ' dsh-wb-card--open' : '') }, [
+      return h('section', { className: 'dsh-wb-card' + (effectiveOpen ? ' dsh-wb-card--open' : ''), ref: rootRef }, [
         h('header', { className: 'dsh-wb-card__head', key: 'head' }, [
           // 折叠头。展开态 = 标题行 + 描述行；收起态**只留一行**（名称 + 三值摘要 + 徽标 + chevron）——
           // 收起的目的就是"知道现在是什么、能不能跑"，多一行说明反而挤。
