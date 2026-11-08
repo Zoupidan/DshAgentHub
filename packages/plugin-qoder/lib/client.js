@@ -36,7 +36,7 @@ window.__ModuleLoader__.load({
       en: { nav: 'Qoder' },
     };
     const T = {
-      cardDesc: '接入本机 Qoder CN（CDP）。启用后自动写入启动项；插件不代启动/关闭 Qoder。',
+      cardDesc: '本机 Qoder CN 接入。启用自动写入启动项，关闭自动清理。',
       badge: { unknown: '…', off: '未启用', working: '工作中', notStarted: '未连接', ready: '已连接' },
       collapse: '收起', expand: '展开',
       scopeMissing: '设置服务不可用，请重启 DSH 后重试。',
@@ -215,23 +215,25 @@ window.__ModuleLoader__.load({
         const next = e && e.target ? e.target.checked === true : false;
         const ok = await save({ enabled: next });
         if (!ok) return;
-        if (next) {
-          // 启用时：自动写入启动项 + 刷新状态/积分（不弹确认、不要求额外步骤）
-          setBusy(true);
-          try {
-            await fetchJson(ROUTE_STARTUP, { method: 'POST' });
+        setBusy(true);
+        try {
+          if (next) {
+            // 启用：自动写入启动项 + 刷新状态/积分（已配置则刷新）
+            try { await fetchJson(ROUTE_STARTUP, { method: 'POST' }); } catch {}
             await loadStartup();
-          } catch {}
-          try { await pullStatus(); } catch {}
-          try {
-            const meta = (await fetchJson(ROUTE_STATUS))?.signin;
-            if (meta && meta.configured) await fetchJson(ROUTE_CREDITS, { method: 'POST' });
-          } catch {}
-          try { await pullStatus(); } catch {}
-          setBusy(false);
-        } else {
-          pullStatus();
-        }
+            await pullStatus();
+            try {
+              const meta = (await fetchJson(ROUTE_STATUS))?.signin;
+              if (meta && meta.configured) await fetchJson(ROUTE_CREDITS, { method: 'POST' });
+            } catch {}
+            await pullStatus();
+          } else {
+            // 关闭：自动清理启动项
+            try { await fetchJson(ROUTE_STARTUP, { method: 'DELETE' }); } catch {}
+            await loadStartup();
+            await pullStatus();
+          }
+        } finally { setBusy(false); }
       }
 
       async function savePat() {
@@ -321,13 +323,8 @@ window.__ModuleLoader__.load({
 
         h('div', { className: 'dsh-qc-block', key: 'startup' }, [
           h('div', { className: 'dsh-qc-bt', key: 't' }, T.startup),
-          h('div', { className: 'dsh-qc-line', key: 'p' }, startup ? `端口 ${startup.port || cfg.cdpPort || 9333} · 启动项 ${startup.exists ? (startup.matches ? '已生效' : '已存在(端口不同)') : '未写入'}` : T.loading),
-          h('div', { className: 'dsh-qc-btns', key: 'btns' }, [
-            h('button', { key: 'a', type: 'button', className: 'dsh-qc-btn dsh-qc-btn--p', disabled: busy, onClick: applyStartup }, T.applyStartup),
-            h('button', { key: 'r', type: 'button', className: 'dsh-qc-btn', disabled: busy, onClick: revokeStartup }, T.revokeStartup),
-            h('button', { key: 'f', type: 'button', className: 'dsh-qc-btn', disabled: busy, onClick: loadStartup }, T.refresh),
-          ]),
-          h('div', { className: 'dsh-qc-line dsh-qc-diag', key: 'n' }, '启用时会自动写入启动项；写入/撤销后需手动重启 Qoder 生效。'),
+          h('div', { className: 'dsh-qc-line', key: 'p' }, startup ? `端口 ${startup.port || cfg.cdpPort || 9333} · ${startup.exists ? (startup.matches ? '已写入' : '端口不一致') : '未写入'}（启用自动写入/关闭自动清理）` : T.loading),
+          h('div', { className: 'dsh-qc-line dsh-qc-diag', key: 'n' }, '变更后需手动重启 Qoder 生效。'),
         ]),
 
         h('details', { className: 'dsh-qc-diag', key: 'adv' }, [
