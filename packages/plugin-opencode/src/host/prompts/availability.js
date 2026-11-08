@@ -33,6 +33,51 @@ const LEAD_MEMBER_ROUTE_TEXT = 'OpenCode is reachable through its team member: s
   + 'do not attempt to call them.';
 
 /**
+ * 不可用支的文案 —— **按探测 reason 如实区分**（2026-11-08 T7 起）。
+ *
+ * 为什么不再一句 "was NOT found (<reason>)" 打天下：探测现在回答的是"可不可用"，
+ *   三种不可用的真相完全不同，处置也不同（重启桌面端 / 看端点错误 / 服务在但模型表空）。
+ *   把它们压成同一句，等于让模型对着 `models-unreadable` 去"重新打开桌面端"。
+ *
+ * 纪律：
+ *   - 'service-missing' 与其它未知 reason **保留原句**（routes.test.js / apply.test.js 逐字钉死，
+ *     那是"文件不在"这一支的既有契约，不为新分支改旧契约）；
+ *   - 每句都只讲读得出来的话（探测证据里的端点/错误码），不猜原因、不编权限；
+ *   - hasTools 两支的差别只在"你现在能做什么"（有工具 / 只能派团队成员）。
+ *
+ * @param {string} reason ProbeResult.reason
+ * @param {boolean} hasTools 本 agent 的可见面上是否有 opencode_*
+ * @returns {string} 一句（或两句）英文本节文本
+ */
+function unavailableText(reason, hasTools) {
+  const nextStep = hasTools ? ' Do not call opencode_run until it is available.' : ' Do not delegate until it is available.';
+  switch (reason) {
+    case 'stale-service':
+      return 'OpenCode delegation is enabled but the registered OpenCode service is stale (stale-service): '
+        + 'service.json is still on disk but the process it names has exited (pid dead) — the desktop app is not running. '
+        + 'Ask the user to start the OpenCode desktop app; opencode_status shows the pid it checked.'
+        + nextStep;
+    case 'service-unreachable':
+      return 'OpenCode delegation is enabled but the local OpenCode service did not answer (service-unreachable): '
+        + 'service.json exists but GET /api/info failed (refused / timed out / non-2xx within 1s). '
+        + 'opencode_status lists the endpoint and the exact error; the service may still be starting or wedged.'
+        + nextStep;
+    case 'models-unreadable':
+      return 'OpenCode delegation is enabled but the local OpenCode service cannot serve models (models-unreadable): '
+        + 'it answers /api/info but GET /api/model returned no readable model table (non-2xx, empty, or unparseable). '
+        + 'This is the "shows running yet no models" state — opencode_status shows the /api/model evidence.'
+        + nextStep;
+    default:
+      // 既有契约原文（service-missing / error / 未知）：一字不动。
+      return hasTools
+        ? `OpenCode delegation is enabled but the local OpenCode service was NOT found (${reason}). `
+          + 'opencode_status lists which service.json paths were checked.'
+        : `OpenCode delegation is enabled but the local OpenCode service was NOT found (${reason}). `
+          + 'Do not delegate until it is available.';
+  }
+}
+
+/**
  * @param {object} runtime config/runtime.js 实例
  * @returns {string} 本节文本（'' = 不加节 —— 不会发生：三态各有一句）
  */
@@ -57,11 +102,7 @@ export function availabilityText(runtime, opts = {}) {
       : `OpenCode delegation is enabled and its availability check is still running (${ps.pendingReason || ps.status}). `
         + 'Spawn the team member "opencode" to delegate in the meantime (description must START with "OpenCode · ").');
   } else if (ps.result?.installed !== true) {
-    lines.push(hasTools
-      ? `OpenCode delegation is enabled but the local OpenCode service was NOT found (${ps.result?.reason || 'unknown'}). `
-        + 'opencode_status lists which service.json paths were checked.'
-      : `OpenCode delegation is enabled but the local OpenCode service was NOT found (${ps.result?.reason || 'unknown'}). `
-        + 'Do not delegate until it is available.');
+    lines.push(unavailableText(typeof ps.result?.reason === 'string' && ps.result.reason !== '' ? ps.result.reason : 'unknown', hasTools));
   } else if (!hasTools) {
     // ★ ① 身份上移（2026-10-17）：本 agent 的可见面上没有 opencode_*（团队在场时 = Lead）——
     //   指引走团队成员身份（名为 "opencode" 的 teammate）；成员职责由成员 scope 的职责段承担。

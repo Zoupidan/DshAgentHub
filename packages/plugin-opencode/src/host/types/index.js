@@ -18,10 +18,10 @@
  */
 
 /**
- * 只读探测结果（U6 / H-NO-EXEC-PROBE：不启动任何程序，只读 service.json 与 pid 活性）。
+ * 只读探测结果（U6 / H-NO-EXEC-PROBE：不启动任何程序；0.7.0 起 = fs 只读 + `process.kill(pid,0)` + 有界 loopback HTTP）。
  * @typedef {Object} ProbeResult
- * @property {boolean} installed 本机是否存在可用的 opencode 服务
- * @property {string} reason 结论码（'ok' | 'service-missing' | 'pid-dead' | 'unreachable' …）
+ * @property {boolean} installed 本机是否存在**可用**的 opencode 服务（pid 活 + /api/info 通 + /api/model 有模型）
+ * @property {string} reason 结论码（'ok' | 'service-missing' | 'stale-service' | 'service-unreachable' | 'models-unreadable' | 'error'）
  * @property {string} servicePath 命中的 service.json 路径（'' = 没找到）
  * @property {string} baseUrl 服务基址（如 http://127.0.0.1:49374；'' = 未知）
  * @property {string} version 服务版本（如 '2.0.28'；'' = 未知）

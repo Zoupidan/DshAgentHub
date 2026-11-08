@@ -10,6 +10,7 @@
  */
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -52,6 +53,45 @@ function makeHome(service = undefined) {
 
 function makeService(overrides = {}) {
   return { id: 'oc-test', version: '2.0.28', url: FAKE_URL, pid: 1234, password: FAKE_PASSWORD, ...overrides };
+}
+
+/**
+ * 探测用夹具服务（T7 起探测会真读 /api/info 与 /api/model —— 只读 GET，见 probe/detect.js）。
+ * 本文件只覆盖"正常命中"这一支；四种不可用形态在 test/probe-usable.test.js 逐条钉死。
+ */
+function startProbeFixture() {
+  const auth = `${'Bas'}${'ic'} ${Buffer.from(`opencode:${FAKE_PASSWORD}`).toString('base64')}`;
+  const server = createServer((req, res) => {
+    if (req.headers.authorization !== auth) {
+      res.writeHead(401);
+      res.end('{}');
+      return;
+    }
+    if (req.url === '/api/info') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ version: '2.0.28', pid: process.pid }));
+      return;
+    }
+    if (req.url === '/api/model') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ location: {}, data: [{ id: 'm1', providerID: 'opencode' }] }));
+      return;
+    }
+    res.writeHead(404);
+    res.end('{}');
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise((done) => {
+          server.closeAllConnections?.();
+          server.close(done);
+        }),
+      });
+    });
+  });
 }
 
 /** 离线 fetch 桩：routes 键 = `METHOD /path`；值 = {status, body} 或函数（拿到 init/URL 自掷）。 */
@@ -200,20 +240,26 @@ test('schema 默认值（解包 volatile 后）与 cordis.patch.yml 字面量一
 
 // ───────────────────── 2. 只读探测 ─────────────────────
 
-test('detectOpencode：service.json 命中 ⇒ installed；证据逐处留痕且绝不含口令', async () => {
-  const { home, env, cleanup } = makeHome(makeService());
+test('detectOpencode：service.json 命中且服务可用 ⇒ installed；证据逐处留痕且绝不含口令', async () => {
+  // T7 起"命中"必须包含可用性证据：pid 活 + /api/info 2xx + /api/model 非空。
+  const fixture = await startProbeFixture();
+  const { home, env, cleanup } = makeHome(makeService({ url: fixture.url, pid: process.pid }));
   try {
     const probe = await detectOpencode(null, {}, env);
     assert.equal(probe.installed, true);
     assert.equal(probe.reason, 'ok');
-    assert.equal(probe.baseUrl, FAKE_URL);
+    assert.equal(probe.baseUrl, fixture.url);
     assert.equal(probe.version, '2.0.28');
-    assert.equal(probe.pid, 1234);
+    assert.equal(probe.pid, process.pid);
     assert.ok(probe.servicePath.startsWith(home), 'servicePath 应指向假家目录内的命中文件');
-    assert.ok(Array.isArray(probe.evidence) && probe.evidence.length >= 1);
+    assert.ok(Array.isArray(probe.evidence) && probe.evidence.length >= 4, '路径 / pid / info / model 都要留痕');
+    const details = JSON.stringify(probe.evidence);
+    assert.match(details, /\/api\/info/);
+    assert.match(details, /\/api\/model/);
     const blob = JSON.stringify(probe);
     assert.equal(blob.includes(FAKE_PASSWORD), false, 'ProbeResult 绝不携带口令');
   } finally {
+    await fixture.close();
     cleanup();
   }
 });

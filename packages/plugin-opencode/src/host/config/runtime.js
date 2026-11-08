@@ -240,8 +240,9 @@ export function createRuntimeBase({
      *   `lastProbeArgs` 被改写的副作用；这里只做一件事 —— 已经排队的结论到手没有。
      * 无在途 ⇒ 立即返回 `null`（**不原地打转、不假装成功**）：调用方据此如实拒绝，
      *   而不是把"探测压根没跑过"说成"CLI 未安装"。
-     * 有界性：探测本身是纯读（`resolveExecutable` / `statSync`，H-NO-EXEC-PROBE 由 CI ③ 静态把关），
-     *   不含任何进程等待；`tools/status.js` 的 `reprobe` 早已用同一条 await 路径 ⇒ 不引入新的挂起面。
+     * 有界性：探测本身是**只读**（`resolveExecutable` / `statSync` / `process.kill(pid,0)` + 有界 loopback
+     *   HTTP GET：/api/info 与 /api/model 各 1s 超时 ⇒ 最坏 ≤2s；探测不拉起任何进程），
+     *   `H-NO-EXEC-PROBE` 由 CI ③ 静态把关；`tools/status.js` 的 `reprobe` 早已用同一条 await 路径 ⇒ 不引入新的挂起面。
      *
      * @returns {Promise<import('../types/index.js').ProbeResult|null>}
      */
