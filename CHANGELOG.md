@@ -2,6 +2,41 @@
 
 本项目版本号遵循 [SemVer](https://semver.org/)，格式参照 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.7.0] - 2026-11-08
+
+### 本次更新的目的
+
+① 任务删除双入口（卡片 `×` + LLM 工具），并**移除启动自动清扫**（改由用户/模型显式决定）；
+② OpenCode 探测改为「可用性」判定（修"后台副进程在跑、模型读不到，却显示运行中"）；
+③ 小版本收口。
+
+### 新增（Added）
+
+- **任务删除（手动）**：设置卡片状态区的任务清单每行一个 `×` —— `POST /plugin-workbuddy/tasks/delete`
+  （loopback-only、只软删指定一行；200/404/400/403/405 全契约），成功即重拉、失败如实显示；删除中禁用防连点。
+- **任务删除（LLM）**：`workbuddy_purge` 新增 `automation_id`（与 `session_key`/`idLike` 互斥）——
+  模型可精准删一个计划任务，不动对话、不清记性。
+- **OpenCode 可用性探测**：判定改为「pid 救活 + `/api/info` 2xx + `/api/model` 非空」；reason
+  `ok / stale-service / service-unreachable / models-unreadable`；fs 只读 + `process.kill(pid,0)` + 有界 loopback
+  HTTP（每端点 1s），零进程拉起，password 不进证据。`availability` 文案按 reason 分三句。
+
+### 变更（Changed）
+
+- **移除启动自动清扫**：`apply()` 不再调用 `sweepStartupAutomationRows()`（函数保留，供未来显式使用）。
+  启动时遗留的任务行**原样保留**；删不删由用户（卡片 `×`）或模型（`workbuddy_purge`）决定。
+  运行期终态回收（成功/失败/超时/取消）不受影响。
+
+### 验证（Verification）
+
+- `npm run ci:redlines` 4/4；`npm run test:host` **702/702**；`npm run test:client` **177/177**。
+- 新增测试：`probe-usable`（19 例）、`task-delete-route`（7 例）、任务清单 UI（11 例）、purge `automation_id`（4 例）；
+  "启动不再清扫"有源码级（`apply.js` 零引用）+ 行为级（预置 armed 行跑完 boot 后原封不动）双证据。
+
+### 说明（真机现状，2026-11-08）
+
+- 本机 `service.json` 的 pid 属 `opencode-cli.exe`，该 sidecar 实测可正常返回 79 条模型 ⇒ 按"可用性"判据报 `ok`；
+  **"GUI 进程是否在前台"在不拉起进程的前提下无法判定**（零进程红线），故以可用性为准；何时需要 GUI 级判定需主理人裁定是否放宽红线。
+
 ## [0.6.1] - 2026-11-08
 
 ### 本次更新的目的

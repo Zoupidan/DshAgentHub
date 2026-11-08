@@ -288,6 +288,56 @@ window.__ModuleLoader__.load({
             /** `ok === true` 但关键字段缺失 ⇒ 未知，不猜"已领/未领"。 */
             noValue: '平台未返回签到状态',
           },
+          /**
+           * 状态区里的「任务清单」小节（`payload.taskList`，2026-11-08）。
+           *
+           * 与上面的 `task` 组**不是一件事**，别合并：
+           *   · `task`     = 本插件**最近一次下发**的回执（对话标题 / 收到没 / 失败人话）；
+           *   · `taskList` = 桌面端 `automations` 表里**当前还活着的计划任务**（可逐个删除）。
+           * 两段的标题也不许同名（下面 `blockTitle` 用「任务清单」而不是「任务」）：
+           * 同一张卡上两个「任务」标题，用户没法判断哪个是他要删的那批。
+           *
+           * ★ 读不到 ≠ 没有任务（与 `credits`/`checkin` 同一条底线）：`ok:false` 只显示 `reason`，
+           *   绝不用「没有任务」承接；「没有任务」只在 `ok:true` 且 `tasks` 为空时才出现。
+           */
+          taskList: {
+            blockTitle: '任务清单',
+            /** 老宿主没有该字段：如实说"没提供"，不冒充空清单。 */
+            missing: '读不到任务清单（当前宿主未提供）',
+            /** `ok:false`：带后端给的可复核证据串（`db-missing: <path>` / `schema-missing-columns: …`）。 */
+            unreadable: (reason) => '任务清单读取失败：' + reason,
+            unreadableNoReason: '任务清单读取失败（未给出原因）',
+            empty: '没有任务',
+            untitled: '（无标题）',
+            /** 桌面端 `automations.status` 的人话（本机实测域 ACTIVE / PAUSED；夹具另有 DONE）。 */
+            statusText: {
+              ACTIVE: '已启用',
+              PAUSED: '已暂停',
+              DONE: '已完成',
+              FAILED: '失败',
+              CANCELLED: '已取消',
+              SCHEDULED: '待执行',
+            },
+            /** `automations.schedule_type` 的人话（本机实测域 once / recurring）。 */
+            scheduleText: {
+              once: '单次',
+              recurring: '重复',
+            },
+            /** `active:false`（软删行，只有显式要历史时才会出现）的人话。 */
+            retired: '已退役',
+            /** 行内时间前缀：下次运行 → 上次运行 → 创建时间，取第一个有值的那个。 */
+            metaNext: '下次 ',
+            metaLast: '上次 ',
+            metaCreated: '创建 ',
+            /** 删除按钮的无障碍名（`title` + `aria-label` 同文，鼠标悬停与读屏器都能读到）。 */
+            deleteLabel: '删除这个任务',
+            /** 删除失败的 Toast 前缀；正文是 HTTP 状态 / 服务端 `error` 码（如实、可核对）。 */
+            deleteFailed: (reason) => '删除失败：' + reason,
+            /** 本机最多列 10 条，多出来的如实交代（不是静默吞掉）。 */
+            moreLocal: (n) => '… 还有 ' + n + ' 条未显示（只列前 ' + String(TASK_LIST_SHOW_MAX) + ' 条）',
+            /** 后端自己已经截断（`truncated:true`）：清单本身不全，说清楚，不让用户以为这就是全部。 */
+            moreServer: '… 还有更多任务（清单本身已截断）',
+          },
           /** 开关行。 */
           toggle: {
             rowLabel: '启用',
@@ -336,6 +386,25 @@ window.__ModuleLoader__.load({
 
     /** 状态 bridge 路由（§3.4.1 之 ⑤；host 侧由 T02 的 makeStatusRoute 注册）。 */
     const ROUTE_STATUS = '/plugin-workbuddy/status';
+
+    /**
+     * 单个计划任务的删除路由（`POST`，body `{ "id": "<automation id>" }`）。
+     * 契约（host 侧 `src/host/routes/tasks/delete.js`）：2xx + `{ok:true, id, retired:true}` = 已软删；
+     * 404 行不存在/已删、400 body 非法、403 非本机回环。
+     *
+     * ★★ 客户端只信 **2xx 且 `ok === true`** ★★
+     *   非 2xx / `ok:false` / 响应不是 JSON ⇒ 一律按失败处理：**如实说出来**，但**不**在本地把那行抹掉。
+     *   本地乐观删行会让"其实没删掉"看起来像删掉了 —— 用户以为清干净了，下次刷新它又冒出来。
+     *   列表的真相只有一个来源：删完立刻重拉状态（见 ConfigCard 的 `deleteTask`）。
+     */
+    const ROUTE_TASKS_DELETE = '/plugin-workbuddy/tasks/delete';
+
+    /**
+     * 状态区「任务清单」最多列几条。
+     * 后端默认回 50 条（`TASK_LIST_DEFAULT_LIMIT`），设置卡上全摊开就不是设置卡而是一张表了；
+     * 10 条足够回答"我桌面上还有哪些任务"，其余用一行「还有 N 条未显示」如实交代（不静默截断）。
+     */
+    const TASK_LIST_SHOW_MAX = 10;
 
     // ───────────────────────── A1 自动刷新（2026-10-18） ─────────────────────────
     //
@@ -692,7 +761,24 @@ window.__ModuleLoader__.load({
       '.dsh-wb-diag__summary::-webkit-details-marker{display:none}' +
       '.dsh-wb-diag__summary::before{content:"▸ ";color:var(--dsw-alias-label-tertiary)}' +
       '.dsh-wb-diag[open]>.dsh-wb-diag__summary::before{content:"▾ "}' +
-      '.dsh-wb-diag__body{padding-top:2px}';
+      '.dsh-wb-diag__body{padding-top:2px}' +
+      // ── 任务清单（状态区内的小节，2026-11-08）─────────────────────────────────────────
+      // 版式与状态行同档（12/13px），但**行内两级**：标题 primary 13px，元信息 tertiary 12px ——
+      // 任务是可操作对象，标题必须比"状态/计划/时间"更抓眼；删除按钮靠右、与标题行同高。
+      '.dsh-wb-tasklist{display:flex;flex-direction:column;gap:5px}' +
+      '.dsh-wb-tasklist__note{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}' +
+      '.dsh-wb-tasklist__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0}' +
+      '.dsh-wb-tasklist__row{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px solid var(--dsw-alias-border-l1,rgba(0,0,0,.06))}' +
+      '.dsh-wb-tasklist__row:first-child{border-top:0}' +
+      '.dsh-wb-tasklist__main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}' +
+      '.dsh-wb-tasklist__title{color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.45;word-break:break-word}' +
+      '.dsh-wb-tasklist__meta{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}' +
+      // 删除按钮：无底无框的图标位，悬停才出底纹并转警告色（删是破坏性动作，但不靠常驻红色喊人）。
+      '.dsh-wb-tasklist__del{flex:none;appearance:none;background:0 0;border:0;border-radius:6px;width:22px;height:22px;padding:0;margin-top:-1px;cursor:pointer;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:15px;line-height:1}' +
+      '.dsh-wb-tasklist__del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-state-warn-primary)}' +
+      '.dsh-wb-tasklist__del:disabled{opacity:.38;cursor:default}' +
+      '.dsh-wb-tasklist__del:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}' +
+      '.dsh-wb-tasklist__more{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}';
 
     const CSS_TAG_ID = PACKAGE_NAME + '/ConfigCard.css';
     if (
@@ -1388,6 +1474,144 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 任务清单里「状态」列的人话。
+     *
+     * ★ 走 `enumText` 的兜底纪律：宿主新增一个枚举值时宁可在卡上说"未知"，
+     *   也不要把 `PARTIAL_REGISTRATION` 那类机器标识符印给用户（见 top 的 enumText 头注）。
+     * ★ `active === false`（软删行）优先说"已退役"：那是**我们的**事实判断，
+     *   比那行自己的 `status` 更能解释"为什么它已经不在任务列表里了"。
+     * @param {object} task 契约行
+     */
+    function taskStatusText(task) {
+      const t = L.taskList;
+      if (task.active === false) return t.retired;
+      return enumText(t.statusText, task.status, L.shell.unknownText);
+    }
+
+    /** 任务清单里「计划类型」列的人话（未知枚举 ⇒ 未知，不发明映射）。 */
+    function taskScheduleText(task) {
+      return enumText(L.taskList.scheduleText, task.scheduleType, L.shell.unknownText);
+    }
+
+    /**
+     * 行内时间：**下次运行 → 上次运行 → 创建**，取第一个有值的那个。
+     * 为什么是这个优先级：用户看一张任务表，最想知道的是"它下一次什么时候跑"；
+     * 没有下次（单次任务跑完了）就问"上次什么时候跑的"；再没有才退到"什么时候建的"。
+     * ★ 取不到（缺失 / 非有限数 / `<= 0`）⇒ 空串，**不印假时间**（`0` 会渲染成 1970 年）。
+     * @param {object} task
+     * @returns {string} 带前缀的人话时间；无可用时间 ⇒ `''`
+     */
+    function taskTimeText(task) {
+      const t = L.taskList;
+      const pick = (value, label) => {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
+        try {
+          return label + new Date(value).toLocaleString();
+        } catch {
+          return ''; // 时间印不出来就不印，不因为一个时间字段把整行或整张卡弄崩
+        }
+      };
+      return pick(task.nextRunAt, t.metaNext)
+        || pick(task.lastRunAt, t.metaLast)
+        || pick(task.createdAt, t.metaCreated);
+    }
+
+    /**
+     * 状态区里的**任务清单**小节（2026-11-08）：桌面端真实计划任务 + 逐个删除（不切界面）。
+     *
+     * ## 为什么放这里、而不是另开一段
+     * 用户的口径是「在卡片里就能看到我桌面上有哪些任务，不要点了还得切过去」。任务清单属于
+     * 「桌面上现在是什么样」这一类事实，与积分/来源/会话同属状态区 ⇒ 收在 `StatusBlock` 里，
+     * 排在状态事实行之后、诊断折叠之前（它是**可操作**的一段，不能埋进折叠）。
+     *
+     * ## 四条纪律
+     * 1. **读不到 ≠ 没有任务**（与积分/签到同一条底线）：`taskList == null` ⇒ "宿主未提供"；
+     *    `ok !== true` ⇒ 逐字显示后端 `reason`；只有 `ok === true` 且 `tasks` 为空才说「没有任务」。
+     * 2. **不本地抹行**：删除成功后由调用方 (`ConfigCard.deleteTask`) 触发一次状态重拉，
+     *    列表永远来自服务端真相 —— 本地乐观删行会把"其实没删掉"演成"删掉了"。
+     * 3. **防连点**：正在删的那一行按钮 `disabled`（且调用方在途期间忽略后续点击）。
+     * 4. **折叠纪律**：`id` 是内部串 ⇒ 不印在界面上，只用作 `key` 与请求体。
+     *
+     * @param {{taskList?: object|null, deletingId?: string, onDelete?: (id: string) => void}} props
+     */
+    function TaskListBlock(props) {
+      const t = L.taskList;
+      const taskList = props ? props.taskList : null;
+      const deletingId = props && typeof props.deletingId === 'string' ? props.deletingId : '';
+      const onDelete = props && typeof props.onDelete === 'function' ? props.onDelete : () => {};
+      const rows = [];
+      if (taskList === null || taskList === undefined) {
+        rows.push(h('div', { className: 'dsh-wb-tasklist__note', key: 'missing' }, t.missing));
+      } else if (taskList.ok !== true) {
+        const reason = typeof taskList.reason === 'string' ? taskList.reason.trim() : '';
+        rows.push(
+          h(
+            'div',
+            { className: 'dsh-wb-tasklist__note dsh-wb-warn', key: 'unreadable' },
+            reason === '' ? t.unreadableNoReason : t.unreadable(reason),
+          ),
+        );
+      } else {
+        // 只有 `id` 合法的行才可渲染：没有 id 的行既删不了、也没法作为稳定 key。
+        const all = (Array.isArray(taskList.tasks) ? taskList.tasks : []).filter(
+          (row) => row !== null && typeof row === 'object'
+            && typeof row.id === 'string' && row.id !== '',
+        );
+        if (all.length === 0) {
+          rows.push(h('div', { className: 'dsh-wb-tasklist__note', key: 'empty' }, t.empty));
+        } else {
+          const shown = all.slice(0, TASK_LIST_SHOW_MAX);
+          rows.push(
+            h(
+              'ul',
+              { className: 'dsh-wb-tasklist__list', key: 'list' },
+              shown.map((task) => {
+                const meta = [taskStatusText(task), taskScheduleText(task), taskTimeText(task)]
+                  .filter((part) => part !== '')
+                  .join(' · ');
+                const title = typeof task.title === 'string' && task.title !== '' ? task.title : t.untitled;
+                return h('li', { className: 'dsh-wb-tasklist__row', key: task.id }, [
+                  h('div', { className: 'dsh-wb-tasklist__main', key: 'main' }, [
+                    h('div', { className: 'dsh-wb-tasklist__title', key: 'title' }, title),
+                    meta === '' ? null : h('div', { className: 'dsh-wb-tasklist__meta', key: 'meta' }, meta),
+                  ]),
+                  // 纯文本 `×` 而不是图标：primitives 的公开导出表里没有垃圾桶图标
+                  // （实测只有 `IconChevronDownOutline{Regular,Medium}` 等），凭空写一个名字
+                  // 就是 2026-10-01「设置项在、里面全白」的同一类事故（`h(undefined)` 抛错）。
+                  h(
+                    'button',
+                    {
+                      key: 'del',
+                      type: 'button',
+                      className: 'dsh-wb-tasklist__del',
+                      title: t.deleteLabel,
+                      'aria-label': t.deleteLabel,
+                      disabled: deletingId === task.id,
+                      onClick: () => onDelete(task.id),
+                    },
+                    '×',
+                  ),
+                ]);
+              }),
+            ),
+          );
+          const hiddenLocal = all.length - shown.length;
+          if (hiddenLocal > 0) {
+            rows.push(h('div', { className: 'dsh-wb-tasklist__more', key: 'more-local' }, t.moreLocal(String(hiddenLocal))));
+          }
+          // `truncated` 是**后端**的截断（它自己取不满）：与"本机只列 10 条"是两件事，分别交代。
+          if (taskList.truncated === true) {
+            rows.push(h('div', { className: 'dsh-wb-tasklist__more', key: 'more-server' }, t.moreServer));
+          }
+        }
+      }
+      return h('div', { className: 'dsh-wb-tasklist' }, [
+        h('div', { className: 'dsh-wb-block-title', key: 'title' }, t.blockTitle),
+        ...rows,
+      ]);
+    }
+
+    /**
      * 状态块（④）：积分 + 列表来源 + 诊断折叠。
      *
      * ★ 诊断细节单独收集，收进默认收起的折叠块。动机是真机读数：探测路径 + 逐条命中 +
@@ -1541,6 +1765,18 @@ window.__ModuleLoader__.load({
           h('summary', { className: 'dsh-wb-diag__summary' }, s.diagnosticsSummary),
           h('div', { className: 'dsh-wb-diag__body' }, diag),
         );
+      // ★ 任务清单小节（2026-11-08）：只在**状态载荷到达**时画。
+      //   路由本身失败时（`status === null`）这里给不出任何"有没有任务"的结论，
+      //   硬画一句"读不到任务清单"只会把一次网络失败说成两件事（失败来由已由上面的 `routeDown` 行给出）。
+      //   它是可操作的一段（带删除按钮）⇒ 排在状态事实行之后、诊断折叠之前，**不进折叠**。
+      const tasks = status === null || status === undefined
+        ? null
+        : h(TaskListBlock, {
+          key: 'tasks',
+          taskList: status.taskList,
+          deletingId: typeof props.deletingTaskId === 'string' ? props.deletingTaskId : '',
+          onDelete: props.onDeleteTask,
+        });
       return h('div', { className: 'dsh-wb-card__status' }, [
         h('div', { className: 'dsh-wb-block-title', key: 'title' }, s.blockTitle),
         // ① 余额块：与状态无关，载荷未到达也画（否则"这一行不存在"会被读成"没有积分功能"）。
@@ -1554,6 +1790,7 @@ window.__ModuleLoader__.load({
           checkin: status === null || status === undefined ? null : status.checkin,
         }),
         ...lines,
+        ...(tasks === null ? [] : [tasks]),
         ...(diagnostics === null ? [] : [diagnostics]),
       ]);
     }
@@ -1632,6 +1869,14 @@ window.__ModuleLoader__.load({
       const [modelQuery, setModelQuery] = useState('');
       // 写失败 Toast：`scope.set` 被拒时如实说出来（点按关闭）。成功写入不碰它。
       const [toast, setToast] = useState('');
+      /**
+       * 正在删除的任务 id（空串 = 没有在途删除）。
+       *
+       * ★ 只记**一个** id：同一时刻只允许一次删除。两个删除同时在飞时，先回来的那次会触发重拉，
+       *   后回来的那次也触发一次 —— 两次重拉的响应先后不定，列表会闪一下旧快照。
+       *   串行化后"删一个、看一个"的因果清楚，也顺手把连点挡住（被点的那行按钮同时置灰）。
+       */
+      const [deletingTaskId, setDeletingTaskId] = useState('');
       // ① 在视口里吗？hub 的另一个标签页是 `hidden`（display:none ⇒ 元素没有盒）⇒ isIntersecting
       //    为 false，所以这一条同时覆盖"标签页被切走"。没有 IntersectionObserver 的宿主
       //    （或测试台）保持 onScreen=true，退化行为是"照常轮询"，不是"冻住"。
@@ -1761,6 +2006,67 @@ window.__ModuleLoader__.load({
         scope.set(field, next).catch((error) => setToast(L.shell.toastPrefix + errorText(error)));
       };
 
+      /**
+       * 删除一个计划任务（`POST /plugin-workbuddy/tasks/delete`，body `{ id }`）。
+       *
+       * ★★ 只信 **2xx 且 `{ok:true}`** ★★（契约见 `ROUTE_TASKS_DELETE` 头注）：
+       *   · 2xx 但 `ok:false`、非 2xx、响应不是 JSON ⇒ 一律进失败文案。**不**因为 HTTP 200 就
+       *     当删掉了 —— 后端把 404/400 的语义写进了 body（`{ok:false, error}`），只看状态码会漏判；
+       *   · 成功 ⇒ `setPollNonce(+1)`：复用 A1 那条自动刷新链（effect 重臂 ⇒ **立即**拉一次），
+       *     让列表由**服务端真相**刷新。为什么不本地删行：本地删行会让"其实没删掉"看起来像删掉了，
+       *     用户下次刷新又看到它 —— 比"慢 200ms"糟得多；
+       *   · 失败 ⇒ Toast 如实显示（`删除失败：…` + HTTP 状态 / 服务端 `error` 码），不静默、不吞。
+       *
+       * ★ 在途期间忽略后续点击（按钮本身也已 disabled）：两个删除同时在飞会让两次重拉的响应
+       *   互相覆盖，列表闪回旧快照。
+       *
+       * @param {string} id automation id（非空字符串）
+       */
+      const deleteTask = (id) => {
+        if (typeof id !== 'string' || id === '') return;
+        if (deletingTaskId !== '') return;
+        setDeletingTaskId(id);
+        void (async () => {
+          let message = '';
+          try {
+            const response = await fetch(ROUTE_TASKS_DELETE, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ id }),
+            });
+            // 先尽力读出 body：失败原因常常只在 body 里（`NOT_FOUND` / `BAD_REQUEST` / `FORBIDDEN`）。
+            // 不是 JSON（网关错误页之类）⇒ null，不许让"读 body 失败"盖掉 HTTP 状态这个更大的事实。
+            let payload = null;
+            try {
+              payload = await response.json();
+            } catch {
+              payload = null;
+            }
+            const code = payload !== null && typeof payload === 'object'
+              && typeof payload.error === 'string' && payload.error !== ''
+              ? payload.error
+              : '';
+            if (!response.ok) {
+              message = 'tasks/delete HTTP ' + String(response.status) + (code === '' ? '' : ' ' + code);
+            } else if (payload === null || typeof payload !== 'object' || payload.ok !== true) {
+              message = 'tasks/delete ' + (code === '' ? 'response-not-ok' : code);
+            }
+          } catch (error) {
+            // 网络层失败（fetch reject / 被中断）：原文如实带上。
+            message = errorText(error);
+          }
+          setDeletingTaskId('');
+          if (message === '') {
+            // 成功要**顺手清掉**上一次的失败 Toast：不然"重试成功了，屏上还挂着删除失败：…"，
+            // 用户会以为还是没删掉（失败文案不清 = 同一句话在成功后变成了假信息）。
+            setToast('');
+            setPollNonce((n) => n + 1);
+            return;
+          }
+          setToast(L.taskList.deleteFailed(message));
+        })();
+      };
+
       // 收起态三值摘要：当前模型 · 推理强度 · 剩余积分（设置列表惯例：右值自带语义，不加标签）。
       // ★ 三处取值各有各的诚实口径，且都与正文共用同一判定（两处各算一遍必然漂）：
       //   · 模型：与 ModelRow **同一个** modelValue（§4.5 回滚口径只在一处判定）；
@@ -1842,7 +2148,15 @@ window.__ModuleLoader__.load({
               onChange: () => write('enableAutoCheckin', !(value.enableAutoCheckin !== false)),
             }),
           ]),
-          h(StatusBlock, { key: 'status', snap, status, failure }),
+          // ④ 状态块（含「任务清单」小节：展示 + 逐个删除；删除成功 ⇒ 由 `deleteTask` 触发一次重拉）。
+          h(StatusBlock, {
+            key: 'status',
+            snap,
+            status,
+            failure,
+            deletingTaskId,
+            onDeleteTask: deleteTask,
+          }),
           // （2026-10-18）原来的 ④ 操作区随"刷新状态"按钮一起删除：状态改由客户端自动刷新 ——
           //   进入视口 / focus / 配置变化立即拉，可见期间按在途 3s、空闲 15s 兜底。
         ]);

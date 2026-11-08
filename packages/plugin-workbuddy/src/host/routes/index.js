@@ -7,6 +7,7 @@
  */
 import { makeStatusRoute } from './status/get.js';
 import { makeDiagnosticsRoute } from './diagnostics/get.js';
+import { makeTasksDeleteRoute } from './tasks/delete.js';
 
 /**
  * @param {{ get?: (ns: string) => any }} settings
@@ -26,5 +27,8 @@ export function makeRoutes(settings, runtime, ns, sessions = null, credits = nul
     makeStatusRoute(settings, runtime, ns, process.env, sessions, credits, checkin),
     // ★ `runtime` 一并通过去：诊断端点要受同一个 `enabled` ① 硬闸门控（2026-10-10 补上）。
     makeDiagnosticsRoute(dispatch, runtime),
+    // ★ 2026-11-08：删除**单个**计划任务（设置卡片用；loopback-only + 软删一行）。
+    //   与 `/status` 的 `taskList` 配成"看 + 删"一对；不在启动时自动清扫（见 apply.js 注释）。
+    makeTasksDeleteRoute(),
   ];
 }

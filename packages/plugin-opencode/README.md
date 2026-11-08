@@ -10,6 +10,11 @@
 
 ## 通道（与 workbuddy 根本不同，改动前必读）
 
+- **可用性探测（0.7.0 起）**：判定不是"`service.json` 在不在"，而是 **pid 活着 + `/api/info` 通 + `/api/model` 真能读到模型**。
+  后台 sidecar（bun.exe / opencode-cli.exe）提供有效服务时判可用；暂存/卡死/模型空 ⇒ `stale-service` / `service-unreachable` /
+  `models-unreadable`，不再"读不到模型却显示运行中"。探测零进程拉起（fs 只读 + `process.kill(pid,0)` + 有界 loopback HTTP，
+  每端点 1s）；区分"GUI 进程是否在"需进程枚举，被零进程红线禁止，故以**可用性**为准。
+
 - **唯一通道**：桌面端**自己的本机 HTTP 服务**。地址与口令在
   `%USERPROFILE%\.local\state\opencode\service.json`（`{id, version, url, pid, password}`；
   桌面端重启会换端口与口令 ⇒ 每次下发**现读**，不缓存）。

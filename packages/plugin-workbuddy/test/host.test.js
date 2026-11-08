@@ -133,6 +133,8 @@ const EFFORT_VALUES = Object.freeze({
 
 const ROUTE_STATUS = '/plugin-workbuddy/status';
 const ROUTE_DIAGNOSTICS = '/plugin-workbuddy/diagnostics';
+// ★ 2026-11-08：删除单个计划任务（设置卡片用；loopback-only 软删一行）。
+const ROUTE_TASKS_DELETE = '/plugin-workbuddy/tasks/delete';
 
 async function waitFor(cond, { timeoutMs = 3000, stepMs = 5 } = {}) {
   const deadline = Date.now() + timeoutMs;
@@ -1158,7 +1160,9 @@ test('卸载收敛：工具 / 路由 / prompt section / settings fiber 随 effec
   //   下发全败，而 dsh-web.log 里连 workbuddy 都没出现，成因只能靠猜。
   //   它与 2026-09-27 删掉的**凭据路由不是同一种东西**：那个回显凭据（E3c 红线），
   //   这个只回候选数/端点/picked/成因，且 loopback-only。下面另有"不回显凭据"的专项断言。
-  assert.equal(host.state.routes.size, 2, '★ 状态路由 + 只读诊断路由（凭据路由 2026-09-27 已删）');
+  // ★ 2026-11-08：第 3 个是**删除单个计划任务**（POST，loopback-only，只软删 body 里那一条）。
+  //   它与状态载荷里的 `taskList` 配成"看 + 删"一对；启动时的自动清扫已按用户要求移除。
+  assert.equal(host.state.routes.size, 3, '★ 状态路由 + 只读诊断路由 + 任务删除路由（凭据路由 2026-09-27 已删）');
   assert.equal(host.state.sections.size, 1);
 
   for (const e of host.state.effects) e.dispose();
@@ -1560,9 +1564,12 @@ test('向后兼容：makeStatusRoute / makeRoutes 省略 sessions 参数 ⇒ 200
   // ★ 2026-09-28：回到 2 个，但第 2 个是**只读诊断**端点——不回显任何凭据，
   //   加它是因为下发链路此前零可观测性（失败连日志都没有）。见下方"不回显凭据"专项断言。
   const routes = mods.routes.makeRoutes(settings, runtime, 'dsh-plugin-workbuddy');
-  assert.equal(routes.length, 2);
+  assert.equal(routes.length, 3);
   assert.equal(routes[0].path, ROUTE_STATUS, '★ 状态路由仍在首位（UI 依赖它的路径）');
   assert.equal(routes[1].path, ROUTE_DIAGNOSTICS, '★ 第 2 个是只读诊断路由');
+  // ★ 2026-11-08：第 3 个 = 删除单个计划任务（POST /plugin-workbuddy/tasks/delete）。
+  assert.equal(routes[2].path, ROUTE_TASKS_DELETE, '★ 第 3 个是任务删除路由（契约路径，客户端依赖）');
+  assert.equal(routes[2].kind, 'exact');
   const routedOmitted = await callRoute(routes[0]);
   assert.equal(routedOmitted.statusCode, 200);
   assert.deepEqual(routedOmitted.json.sessions, [], 'makeRoutes 省略 sessions ⇒ 空表');
@@ -1854,6 +1861,50 @@ test('B1 负控：OFF 期间 spawn 恒零；探测从未启动时"未知乐观�
   const registered = await waitFor(() => host.state.registration.size === 4);
   assert.ok(registered);
   assert.equal(host.state.spawnCalls.length, 0, '仅注册不 spawn（执行面另有 A4 门）');
+});
+
+// ──────── 2026-11-08：启动不再自动清扫计划任务活行（用户要求：删除由用户/LLM 显式决定） ────────
+
+test('启动不再自动清扫：apply() 保留库里"到点未作废"的活行（旧实现会把它们全退役）', { skip: SKIP }, async () => {
+  // ★ 为什么这条必须是**行为级**负控：`automation.js` 里清扫函数仍在（显式调用可用），
+  //   源码断言（automation-early-retire.test.js ⑤c）只能证明 apply.js 不引用它；
+  //   真启动一次、库里活行原封不动，才是"启动确实不清理"的证据。
+  const { DatabaseSync } = await import('node:sqlite');
+  const home = makeDesktopHome({ installed: true });
+  const dbFile = join(home, 'workbuddy.db');
+  const now = Date.now();
+
+  const seed = new DatabaseSync(dbFile);
+  try {
+    seed.exec(`CREATE TABLE automations (
+      id TEXT PRIMARY KEY, name TEXT, next_run_at INTEGER, valid_until TEXT,
+      deleted_at INTEGER, updated_at INTEGER)`);
+    const put = (id, nextRunAt) => seed.prepare(
+      'INSERT INTO automations (id, name, next_run_at, valid_until, deleted_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?)',
+    ).run(id, id, nextRunAt, new Date(now + 600_000).toISOString(), now);
+    // 两条"已到点且未作废"的活行 = 旧启动清扫的目标集合（判据与调度器一致）。
+    put('armed-startup-1', now - 1_000);
+    put('armed-startup-2', now - 2_000);
+  } finally {
+    seed.close();
+  }
+
+  const host = boot({ enabled: true, desktopHome: home });
+  const probed = await waitFor(async () => (await host.statusPayload()).json.probe !== null);
+  assert.ok(probed, '探测应在线性时间内出结论（确保 apply 的同步段确实跑过）');
+
+  const check = new DatabaseSync(dbFile, { readOnly: true });
+  try {
+    const live = check.prepare('SELECT id FROM automations WHERE deleted_at IS NULL ORDER BY id').all()
+      .map((r) => String(r.id));
+    assert.deepEqual(
+      live,
+      ['armed-startup-1', 'armed-startup-2'],
+      '★ apply() 不得在启动时退役任何计划任务活行（删除改由用户 POST /tasks/delete 或 LLM workbuddy_purge 显式触发）',
+    );
+  } finally {
+    check.close();
+  }
 });
 
 export { boot };

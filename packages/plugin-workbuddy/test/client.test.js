@@ -296,6 +296,34 @@ function makeFakeDocument() {
 }
 
 /**
+ * 桌面端任务清单载荷（`payload.taskList`，与 host `src/host/launch/task-list.js` 的契约同形）。
+ *
+ * ★ 默认给 **`ok:true` + 空清单**（而不是留空字段）：宿主 0.6.1 起每次状态都会带这一段，
+ *   夹具的默认值必须与真机同形 —— 否则"老宿主没提供"这条分支会在多数用例里被误当常态
+ *   （与本文件里"积分默认给有值"同一个理由）。
+ */
+function taskListPayload(overrides = {}) {
+  return { ok: true, tasks: [], count: 0, truncated: false, reason: null, ...overrides };
+}
+
+/** 任务行夹具（字段域与 `automations` 表投影一致；本机实测 status ∈ ACTIVE/PAUSED、schedule_type ∈ once/recurring）。 */
+function taskRow(overrides = {}) {
+  return {
+    id: 'auto-1',
+    title: '给 README 加一段',
+    status: 'ACTIVE',
+    scheduleType: 'once',
+    createdAt: 1_727_846_400_000,
+    updatedAt: 1_727_846_400_000,
+    lastRunAt: null,
+    nextRunAt: 1_727_932_800_000,
+    validUntil: null,
+    active: true,
+    ...overrides,
+  };
+}
+
+/**
  * 状态载荷夹具。
  *
  * ★★ 2026-10-01：WorkBuddy 的命令行链路整体删除 ⇒ 载荷**两支平行数组**，读错字段会拿到假事实 ★★
@@ -337,6 +365,9 @@ function statusPayload(overrides = {}) {
     modelsSource: 'product.json',
     // 默认给一份**有值**的积分：卡片必须能把它画出来（缺省 null 会让"加载中"分支在多数用例里被误当常态）。
     credits: { ok: true, source: 'live', remain: 987.47, at: 1, ageMs: 1_000, stale: false, unit: 'credits', isPaidUser: true, packages: [], error: null },
+    // ★ 2026-11-08：桌面端任务清单（只读投影）。默认**空清单**（`ok:true`）—— 真机每次都会带这一段，
+    //   夹具留空字段会让"老宿主未提供"那条分支在日常用例里冒充常态（见 taskListPayload 头注）。
+    taskList: taskListPayload(),
     inFlight: [],
     lastRun: null,
   };
@@ -3094,3 +3125,317 @@ test('CSS token 纪律：不得引用宿主**不存在**的别名（不存在的
     assert.ok(css.includes('--dsw-alias-switch-thumb'), '开关拇指走 token（深色主题下不该是纯白）');
   });
 });
+
+// ───────────── 任务清单 + 一键删除（2026-11-08）：状态区里列出桌面端计划任务，点一下就地删 ─────────────
+//
+// 用户口径：「在卡片里就能看到我桌面上有哪些任务，要删就点垃圾桶，不要切界面。」
+// 这组判据分两半，互不替代：
+//   · **展示面**：读不到 ≠ 没有任务（`ok:false` 只显示 `reason`）；「没有任务」只在 `ok:true` 的空清单上出现；
+//     后端枚举（ACTIVE / recurring）**不**上屏（走 enumText 的人话兜底，与状态标签同一纪律）。
+//   · **操作面**：只信 **2xx + `{ok:true}`**（HTTP 200 但 body 说没成 = 没成）；成功 ⇒ 立刻重拉
+//     （复用 A1 自动刷新链，`fetches +1`），列表以**服务端真相**为准（不本地抹行）；失败 ⇒ 卡片上
+//     如实说（Toast，不静默）；在途 ⇒ 该行按钮 disabled（防连点）。
+
+/** 删除路由（契约在 `lib/client.js` 的 `ROUTE_TASKS_DELETE` 头注；这里逐字写一份 = 跨层锁）。 */
+const ROUTE_TASK_DELETE = '/plugin-workbuddy/tasks/delete';
+
+/**
+ * 任务清单的取数桩：状态 GET 依次返回 `statuses`（末项重复用），删除 POST 回 `deleteReply`。
+ * ★ 删除响应可以是**函数**（返回一个未落地的 Promise）——「删除中」这个状态只能这么钉住。
+ */
+function makeTaskListFetch({ statuses, deleteReply = { ok: true, status: 200, json: async () => ({ ok: true, id: 'auto-1', retired: true }) } }) {
+  const calls = [];
+  let statusIndex = 0;
+  const fetchFn = async (url, options) => {
+    calls.push({ url, options });
+    if (url === ROUTE_TASK_DELETE) {
+      if (typeof deleteReply === 'function') return await deleteReply();
+      return deleteReply;
+    }
+    const payload = statuses[Math.min(statusIndex, statuses.length - 1)];
+    statusIndex += 1;
+    return { ok: true, status: 200, json: async () => payload };
+  };
+  return {
+    fetchFn,
+    calls,
+    statusCalls: () => calls.filter((c) => c.url !== ROUTE_TASK_DELETE),
+    deleteCalls: () => calls.filter((c) => c.url === ROUTE_TASK_DELETE),
+  };
+}
+
+/**
+ * 起一张带任务清单的卡。
+ * @param {object} taskList 首屏载荷里的 `taskList`（`statuses` 给定时以 `statuses[0]` 为准）
+ * @param {{ statuses?: object[], deleteReply?: object|Function }} [opts]
+ */
+async function bootTaskList(taskList, { statuses = null, deleteReply } = {}) {
+  const stub = makeTaskListFetch({
+    statuses: statuses ?? [statusPayload({ taskList })],
+    deleteReply,
+  });
+  const app = await boot({ fetchImpl: stub.fetchFn });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  return { app, stub, tree: app.expand() };
+}
+
+/** 任务行节点（`li.dsh-wb-tasklist__row`；类名逐字取自 CARD_CSS）。 */
+function taskRowNodes(tree) {
+  return findAll(
+    tree,
+    (n) => n.type === 'li' && String(n.props?.className ?? '').split(' ').includes('dsh-wb-tasklist__row'),
+  );
+}
+
+/** 删除按钮节点（`button.dsh-wb-tasklist__del`）。 */
+function taskDelButtons(tree) {
+  return findAll(tree, (n) => n.type === 'button' && String(n.props?.className ?? '') === 'dsh-wb-tasklist__del');
+}
+
+test('任务清单①：状态区内逐行列出任务（标题 / 状态 / 计划 / 时间），每行一个带 aria-label 的删除按钮', async () => {
+  const { tree } = await bootTaskList(taskListPayload({
+    tasks: [
+      taskRow({ id: 'auto-1', title: '给 README 加一段', status: 'ACTIVE', scheduleType: 'once' }),
+      taskRow({
+        id: 'auto-2', title: '跑夜间回归', status: 'PAUSED', scheduleType: 'recurring',
+        nextRunAt: null, lastRunAt: null, createdAt: 1_727_846_400_000,
+      }),
+    ],
+    count: 2,
+  }));
+  // ① 落点：任务小节必须在**状态区**内（不是另起一段，也不是折叠内容）。
+  const statusBlock = findAll(tree, (n) => String(n.props?.className ?? '') === 'dsh-wb-card__status')[0];
+  assert.ok(statusBlock !== undefined, '状态区必须存在');
+  assert.ok(
+    findAll(statusBlock, (n) => String(n.props?.className ?? '').split(' ').includes('dsh-wb-tasklist')).length >= 1,
+    '★ 任务清单必须渲染在状态区内',
+  );
+  // ② 行内容：标题 + 状态 + 计划 + 时间（人话）。
+  const rows = taskRowNodes(tree);
+  assert.equal(rows.length, 2, '两条任务 ⇒ 两行');
+  const first = textOf(rows[0]);
+  assert.ok(first.includes('给 README 加一段'), '标题必须上屏');
+  assert.ok(first.includes('已启用'), '★ 状态枚举必须翻成人话（不得印 ACTIVE）');
+  assert.ok(first.includes('单次'), '★ 计划类型必须翻成人话（不得印 once）');
+  assert.ok(first.includes('下次 '), '有 nextRunAt ⇒ 行内时间取"下次运行"');
+  const second = textOf(rows[1]);
+  assert.ok(second.includes('已暂停'));
+  assert.ok(second.includes('重复'));
+  assert.ok(second.includes('创建 '), '没有下次/上次时间 ⇒ 退到创建时间（不得留空）');
+  assert.equal(textOf(tree).includes('ACTIVE'), false, '★ 桌面端枚举原串不得印上卡（含折叠）');
+  assert.equal(textOf(tree).includes('recurring'), false, '★ 同上');
+  // ③ 每行恰好一个删除按钮，且无障碍名逐字（读屏器与悬停都要能读到"删的是这个"）。
+  const buttons = taskDelButtons(tree);
+  assert.equal(buttons.length, 2, '每行一个删除按钮');
+  for (const button of buttons) {
+    assert.equal(button.props.title, '删除这个任务');
+    assert.equal(button.props['aria-label'], '删除这个任务');
+    assert.equal(button.props.type, 'button');
+    assert.equal(button.props.disabled, false, '没有在途删除 ⇒ 按钮可点');
+  }
+  // ④ 样式随**同一份** CSS 下发（不另起 style tag），且删除按钮不得掉进折叠 —— 它是可操作面，
+  //    收起来就等于把"就地删"这件事藏了。
+  const css = globalThis.document.created.map((tag) => String(tag.textContent)).join('');
+  for (const cls of ['.dsh-wb-tasklist', '.dsh-wb-tasklist__row', '.dsh-wb-tasklist__meta', '.dsh-wb-tasklist__del']) {
+    assert.ok(css.includes(cls), `★ 样式必须随同一份 CSS 下发：${cls}`);
+  }
+  const inDetails = findAll(findAll(tree, (n) => n.type === 'details'), (n) => String(n.props?.className ?? '') === 'dsh-wb-tasklist__del');
+  assert.equal(inDetails.length, 0, '★ 删除按钮不得落进折叠（默认收起的内容里点不到它）');
+});
+
+test('任务清单②：最多列 10 条（多出的如实交代）；后端 truncated 另有提示（两种截断不互相冒充）', async () => {
+  const many = Array.from({ length: 12 }, (_, i) => taskRow({ id: 'auto-' + String(i), title: '任务 ' + String(i) }));
+  const full = await bootTaskList(taskListPayload({ tasks: many, count: 12 }));
+  assert.equal(taskRowNodes(full.tree).length, 10, '★ 最多列 10 条（后端默认可回 50 条，设置卡不能变成一张表）');
+  assert.ok(
+    mainText(full.tree).includes('… 还有 2 条未显示（只列前 10 条）'),
+    '★ 本机截断必须说出来（静默截断 = 让用户以为只有这些）',
+  );
+
+  const cut = await bootTaskList(taskListPayload({ tasks: many.slice(0, 2), count: 2, truncated: true }));
+  assert.equal(taskRowNodes(cut.tree).length, 2);
+  assert.ok(
+    mainText(cut.tree).includes('… 还有更多任务（清单本身已截断）'),
+    '★ 后端自己截断也要说（这份清单本身就不全）',
+  );
+  assert.equal(mainText(cut.tree).includes('只列前'), false, '本机没截断 ⇒ 不得冒充"只列前 10 条"');
+});
+
+test('任务清单③：ok:false ⇒ 逐字显示 reason，**不得**显示成"没有任务"（读不到 ≠ 没有）', async () => {
+  const { tree } = await bootTaskList(taskListPayload({
+    ok: false, tasks: [], count: 0, truncated: false,
+    reason: 'db-missing: C:/wb/.workbuddy/workbuddy.db',
+  }));
+  const main = mainText(tree);
+  assert.ok(
+    main.includes('任务清单读取失败：db-missing: C:/wb/.workbuddy/workbuddy.db'),
+    '★ 失败来由必须逐字上屏（后端给的是可复核证据串）',
+  );
+  assert.equal(main.includes('没有任务'), false, '★★ 读不到不得被读成"没有任务"（那是把故障说成空清单）');
+  assert.equal(taskRowNodes(tree).length, 0);
+  assert.equal(taskDelButtons(tree).length, 0, '读不到 ⇒ 没有可删的行（不得凭空给按钮）');
+});
+
+test('任务清单④（与③对称的正控）：ok:true 且清单为空 ⇒ "没有任务"', async () => {
+  const { tree } = await bootTaskList(taskListPayload());
+  const main = mainText(tree);
+  assert.ok(main.includes('没有任务'), '正控：确认空清单这条分支真的会被走到（否则③的负控是空转的）');
+  assert.equal(main.includes('读取失败'), false);
+  assert.equal(main.includes('未提供'), false);
+});
+
+test('任务清单⑤：老宿主没有 taskList 字段 ⇒ "宿主未提供"，不冒充空清单（未知不是空）', async () => {
+  const payload = statusPayload();
+  delete payload.taskList;
+  const stub = makeTaskListFetch({ statuses: [payload] });
+  const app = await boot({ fetchImpl: stub.fetchFn });
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const main = mainText(app.expand());
+  assert.ok(main.includes('读不到任务清单（当前宿主未提供）'), '缺字段 ⇒ 如实说"没提供"');
+  assert.equal(main.includes('没有任务'), false, '★★ 缺字段不得被读成"没有任务"');
+});
+
+test('任务清单⑥：点删除 ⇒ POST /plugin-workbuddy/tasks/delete，method/headers/body 逐字正确', async () => {
+  const { app, stub, tree } = await bootTaskList(taskListPayload({
+    tasks: [taskRow({ id: 'auto-42' })],
+    count: 1,
+  }));
+  void app;
+  taskDelButtons(tree)[0].props.onClick();
+  await settle();
+  await settle();
+  assert.equal(stub.deleteCalls().length, 1, '一次点击 = 一次请求');
+  const call = stub.deleteCalls()[0];
+  assert.equal(call.url, ROUTE_TASK_DELETE, '★ 删除必须打到 /plugin-workbuddy/tasks/delete');
+  assert.equal(call.options.method, 'POST');
+  assert.equal(call.options.headers['content-type'], 'application/json');
+  assert.equal(call.options.body, JSON.stringify({ id: 'auto-42' }), '★ body = {id}，且就是这一行的那条');
+});
+
+test('任务清单⑦：删除成功（2xx + ok:true）⇒ 立刻重拉状态（+1），列表以服务端新载荷为准', async () => {
+  const before = statusPayload({ taskList: taskListPayload({ tasks: [taskRow({ id: 'auto-1', title: '该被删掉的那条' })], count: 1 }) });
+  const after = statusPayload({ taskList: taskListPayload({ tasks: [], count: 0 }) });
+  const { app, stub } = await bootTaskList(before.taskList, { statuses: [before, after] });
+  assert.equal(stub.statusCalls().length, 1, '前提：首屏拉过一次');
+  taskDelButtons(app.expand())[0].props.onClick();
+  await settle();
+  await settle();
+  // ★ `setPollNonce(+1)` 只是改了 state：伪 React **不会**自动重跑 effect（真机由 React 调度）。
+  //   这里回放一次 effect，证明的正是"复用了 A1 那条链"—— deps 变了 ⇒ cleanup ⇒ 重臂 ⇒ 立即拉一次。
+  app.expand();
+  app.flushEffects();
+  await settle();
+  assert.equal(stub.statusCalls().length, 2, '★ 成功 ⇒ 立即重拉（复用 A1 自动刷新链，bump 一次）');
+  const tree = app.expand();
+  assert.equal(taskRowNodes(tree).length, 0, '★ 列表跟着新载荷走（不靠本地抹行）');
+  assert.ok(mainText(tree).includes('没有任务'));
+  assert.equal(
+    findAll(tree, (n) => n.props?.className === 'dsh-wb-toast').length,
+    0,
+    '成功不得出失败 Toast',
+  );
+});
+
+test('任务清单⑧：删除失败（404 + {ok:false,error}）⇒ Toast 如实显示；不重拉、不本地删行、按钮恢复可点', async () => {
+  const { app, stub } = await bootTaskList(
+    taskListPayload({ tasks: [taskRow({ id: 'auto-9', title: '删不掉的那条' })], count: 1 }),
+    { deleteReply: { ok: false, status: 404, json: async () => ({ ok: false, error: 'NOT_FOUND', id: 'auto-9' }) } },
+  );
+  taskDelButtons(app.expand())[0].props.onClick();
+  await settle();
+  await settle();
+  const tree = app.expand();
+  const toast = findAll(tree, (n) => n.props?.className === 'dsh-wb-toast')[0];
+  assert.ok(toast !== undefined, '★ 失败必须出 Toast（不静默吞掉）');
+  assert.equal(toast.props.role, 'alert', 'Toast 必须 role=alert（无障碍树可达）');
+  assert.ok(labelText(toast).startsWith('删除失败：'), '★ 说清是"删除失败"（不是保存失败）');
+  assert.ok(labelText(toast).includes('404'), 'HTTP 状态如实带上');
+  assert.ok(labelText(toast).includes('NOT_FOUND'), '服务端 error 码如实带上（可核对、可反馈）');
+  assert.equal(stub.statusCalls().length, 1, '失败不得重拉（没删掉就别刷新成"什么都没发生"）');
+  assert.equal(taskRowNodes(tree).length, 1, '★ 失败不得本地删行（那会把"没删掉"演成"删掉了"）');
+  assert.ok(mainText(tree).includes('删不掉的那条'));
+  assert.equal(taskDelButtons(tree)[0].props.disabled, false, '失败后按钮必须恢复可点（否则一次 404 就锁死这一行）');
+});
+
+test('任务清单⑨：HTTP 200 但 body 是 {ok:false} ⇒ 仍按失败处理（★ 只信 2xx + ok:true）', async () => {
+  const { app, stub } = await bootTaskList(
+    taskListPayload({ tasks: [taskRow({ id: 'auto-3' })], count: 1 }),
+    { deleteReply: { ok: true, status: 200, json: async () => ({ ok: false, error: 'INTERNAL' }) } },
+  );
+  taskDelButtons(app.expand())[0].props.onClick();
+  await settle();
+  await settle();
+  const tree = app.expand();
+  const toast = findAll(tree, (n) => n.props?.className === 'dsh-wb-toast')[0];
+  assert.ok(toast !== undefined, '★ 200 不等于删掉了：body 说没成就是没成（否则会静默失败）');
+  assert.ok(labelText(toast).includes('INTERNAL'), '服务端 error 码如实带上');
+  assert.equal(stub.statusCalls().length, 1, '未成功 ⇒ 不重拉');
+  assert.equal(taskRowNodes(tree).length, 1, '未成功 ⇒ 行还在');
+});
+
+test('任务清单⑩：删除中 ⇒ 该行按钮 disabled；连点只发一次请求（防连点、不并发删）', async () => {
+  const { app, stub } = await bootTaskList(
+    taskListPayload({
+      tasks: [taskRow({ id: 'auto-1', title: 'A 任务' }), taskRow({ id: 'auto-2', title: 'B 任务' })],
+      count: 2,
+    }),
+    // 永不落地的响应：把"删除中"这个状态钉在原地（真机是一次网络往返）。
+    { deleteReply: () => ({ ok: true, status: 200, json: () => new Promise(() => {}) }) },
+  );
+  const first = taskDelButtons(app.expand());
+  assert.equal(first[0].props.disabled, false, '前提：初始可点');
+  first[0].props.onClick();
+  await settle();
+  await settle();
+  const during = taskDelButtons(app.expand());
+  assert.equal(during[0].props.disabled, true, '★ 在途的那一行必须置灰（防连点）');
+  assert.equal(during[1].props.disabled, false, '别的行不受影响（各删各的）');
+  // 连点：真机上 disabled 已经挡住，这里硬调 onClick 证明**产品侧也有**一道闸（不靠 UI 属性兜底）。
+  during[0].props.onClick();
+  during[1].props.onClick();
+  await settle();
+  assert.equal(stub.deleteCalls().length, 1, '★ 在途期间忽略后续点击（两个删除同时在飞会让列表闪回旧快照）');
+  assert.equal(stub.statusCalls().length, 1, '在途期间不重拉');
+});
+
+test('任务清单⑪：失败后重试成功 ⇒ 旧的失败 Toast 必须消失（不留一句已经过期的错）', async () => {
+  let attempt = 0;
+  const before = statusPayload({ taskList: taskListPayload({ tasks: [taskRow({ id: 'auto-7', title: '重试就能删掉的那条' })], count: 1 }) });
+  const after = statusPayload({ taskList: taskListPayload({ tasks: [], count: 0 }) });
+  const { app } = await bootTaskList(before.taskList, {
+    statuses: [before, after],
+    deleteReply: () => {
+      attempt += 1;
+      // 第一次：后端说行不存在（真机上常见：这一行已被桌面端删掉了）。
+      if (attempt === 1) return { ok: false, status: 404, json: async () => ({ ok: false, error: 'NOT_FOUND' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true, id: 'auto-7', retired: true }) };
+    },
+  });
+  taskDelButtons(app.expand())[0].props.onClick();
+  await settle();
+  await settle();
+  assert.equal(
+    findAll(app.expand(), (n) => n.props?.className === 'dsh-wb-toast').length,
+    1,
+    '前提：第一次失败确实出了 Toast',
+  );
+  // 第二次（按钮在失败后已恢复可点）+ 回放 effect（`setPollNonce` 只是改 state）。
+  taskDelButtons(app.expand())[0].props.onClick();
+  await settle();
+  await settle();
+  app.expand();
+  app.flushEffects();
+  await settle();
+  const tree = app.expand();
+  assert.equal(
+    findAll(tree, (n) => n.props?.className === 'dsh-wb-toast').length,
+    0,
+    '★ 重试成功后旧失败 Toast 必须被清掉（否则屏上挂着一句假信息）',
+  );
+  assert.equal(taskRowNodes(tree).length, 0, '删掉了 ⇒ 重拉后的清单里没有它');
+});
+

@@ -6,7 +6,9 @@
  *     经真 `loadSessionMap` + 假 settings 服务验证）；
  *  ② idLike 入参：恰好命中一条才删；0 条 / ≥2 条一律拒绝并如实回报，**绝不触碰其他对话**；
  *  ③ 两参同给但不一致 ⇒ 拒绝（防静默错位）；
- *  ④ 软删语义：`deleted_at` 置位、其余列不动、其他会话行分毫未动。
+ *  ④ 软删语义：`deleted_at` 置位、其余列不动、其他会话行分毫未动；
+ *  ⑤ automation_id（2026-11-08）：只软删那一条**活**计划任务，行不存在/已删 ⇒ NOT_FOUND，
+ *     与 session_key / idLike **互斥**（给多个目标 ⇒ 参数错误，什么都不碰）。
  *
  * @module test/purge.test
  */
@@ -57,7 +59,22 @@ function makeDb() {
     deleted_at INTEGER,
     permission_mode TEXT
   )`);
+  // ★ 2026-11-08：`workbuddy_purge` 的 automation_id 分支读 `automations`（只读那一行 + retireRow 软删）。
+  db.exec(`CREATE TABLE automations (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    next_run_at INTEGER,
+    valid_until TEXT,
+    deleted_at INTEGER,
+    updated_at INTEGER
+  )`);
   return db;
+}
+
+function insertAutomation(db, id, deletedAt = null, updatedAt = 1000) {
+  db.prepare(
+    'INSERT INTO automations (id, name, next_run_at, valid_until, deleted_at, updated_at) VALUES (?, ?, NULL, NULL, ?, ?)',
+  ).run(id, id, deletedAt, updatedAt);
 }
 
 function insertSession(db, id, title, createdAt) {
@@ -167,11 +184,99 @@ test('workbuddy_purge：无入参 / 无记录 ⇒ 如实拒绝', async () => {
 
   const noArgs = await tool.execute({});
   assert.equal(noArgs.ok, false);
-  assert.match(noArgs.detail, /provide session_key or idLike/);
+  assert.match(noArgs.detail, /provide exactly one target/);
 
   const noRecord = await tool.execute({ session_key: 'ghost' });
   assert.equal(noRecord.ok, false);
   assert.match(noRecord.detail, /no recorded conversation/);
+
+  db.close();
+});
+
+test('workbuddy_purge：automation_id 只软删那一条活计划任务，不动其它行/对话', async () => {
+  const db = makeDb();
+  const SID = 'eeeeeeee-1111-2222-3333-444444444444';
+  insertSession(db, SID, 'Unrelated conversation', 1000);
+  insertAutomation(db, 'auto-target', null, 1000);
+  insertAutomation(db, 'auto-other', null, 1000);
+  insertAutomation(db, 'auto-gone', 900, 900);
+  const sessions = makeSessions(fakeSettingsService({ sessions: {} }));
+  const tool = makePurgeTool(null, null, CTX, sessions, db);
+
+  const result = await tool.execute({ automation_id: 'auto-target' });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.id, 'auto-target');
+  assert.equal(result.retired, true);
+  assert.deepEqual(result.purged, [], '★ 任务是任务、对话是对话：不得顺手删会话');
+  assert.deepEqual(result.mapKeysCleared, []);
+
+  const target = db.prepare('SELECT deleted_at, updated_at FROM automations WHERE id = ?').get('auto-target');
+  assert.notEqual(target.deleted_at, null, '软删 = deleted_at 置位');
+  assert.notEqual(target.updated_at, 1000, 'updated_at 同步刷新');
+  const other = db.prepare('SELECT deleted_at, updated_at FROM automations WHERE id = ?').get('auto-other');
+  assert.equal(other.deleted_at, null, '其它活任务绝不触碰');
+  assert.equal(other.updated_at, 1000, '其它行连 updated_at 都不动');
+  const gone = db.prepare('SELECT deleted_at, updated_at FROM automations WHERE id = ?').get('auto-gone');
+  assert.equal(gone.deleted_at, 900, '已删行保持原值');
+  assert.equal(gone.updated_at, 900);
+  assert.equal(
+    db.prepare('SELECT deleted_at FROM sessions WHERE id = ?').get(SID).deleted_at,
+    null,
+    '★ 不得碰任何会话行',
+  );
+
+  // 渲染面必须说"删的是任务"，不能沿用"Purged 0 conversation"。
+  const text = tool.output.render({ automation_id: 'auto-target' }, result)[0].text;
+  assert.match(text, /Deleted scheduled task auto-target/);
+  assert.doesNotMatch(text, /Purged 0 conversation/);
+
+  db.close();
+});
+
+test('workbuddy_purge：automation_id 不存在 / 已软删 ⇒ NOT_FOUND（不改写已删行）', async () => {
+  const db = makeDb();
+  insertAutomation(db, 'auto-gone', 900, 900);
+  const tool = makePurgeTool(null, null, CTX, makeSessions(fakeSettingsService({ sessions: {} })), db);
+
+  const missing = await tool.execute({ automation_id: 'auto-ghost' });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error, 'NOT_FOUND');
+  assert.equal(missing.id, 'auto-ghost');
+
+  const already = await tool.execute({ automation_id: 'auto-gone' });
+  assert.equal(already.ok, false);
+  assert.equal(already.error, 'NOT_FOUND');
+  assert.equal(already.id, 'auto-gone');
+
+  const gone = db.prepare('SELECT deleted_at, updated_at FROM automations WHERE id = ?').get('auto-gone');
+  assert.equal(gone.deleted_at, 900, '★ 已删行的 deleted_at 不得被改写');
+  assert.equal(gone.updated_at, 900, '★ 已删行的 updated_at 不得被改写');
+
+  db.close();
+});
+
+test('workbuddy_purge：automation_id 与 session_key / idLike 互斥 ⇒ 参数错误，什么都不碰', async () => {
+  const db = makeDb();
+  const SID = 'ffffffff-1111-2222-3333-444444444444';
+  insertSession(db, SID, 'Recorded', 1000);
+  insertAutomation(db, 'auto-live', null, 1000);
+  const sessions = makeSessions(fakeSettingsService({ sessions: {} }));
+  sessions.adopt('k-auto', { cliSessionId: SID, cwd: 'D:/repo', own: true });
+  const tool = makePurgeTool(null, null, CTX, sessions, db);
+
+  for (const args of [
+    { automation_id: 'auto-live', session_key: 'k-auto' },
+    { automation_id: 'auto-live', idLike: 'ffffffff' },
+    { automation_id: 'auto-live', session_key: 'k-auto', idLike: 'ffffffff' },
+  ]) {
+    const result = await tool.execute(args);
+    assert.equal(result.ok, false, JSON.stringify(args));
+    assert.match(result.detail, /mutually exclusive/);
+  }
+
+  // 任务与对话都必须原封不动（拒绝即整体不生效）。
+  assert.equal(db.prepare('SELECT deleted_at FROM automations WHERE id = ?').get('auto-live').deleted_at, null);
+  assert.equal(db.prepare('SELECT deleted_at FROM sessions WHERE id = ?').get(SID).deleted_at, null);
 
   db.close();
 });

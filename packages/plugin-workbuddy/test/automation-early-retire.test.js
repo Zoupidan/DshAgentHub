@@ -14,7 +14,9 @@
  *   ③ 一旦 `sessionFacts` 拿到 `sessions.id` 立刻 `retireRow` + `sessionStore.adopt(key)`，
  *      后续走复用不再建行；
  *   ④ 超时/取消同样 retire，绝不留活行到 `valid_until`；
- *   ⑤ 启动清理 `sweepStartupAutomationRows` 全 retire 活行；
+ *   ⑤ 启动清扫**函数本身**（`sweepStartupAutomationRows`）全 retire 活行 ——
+ *      ★ 2026-11-08 起 `apply.js` **不再自动调用**它（用户要求"删除由用户/LLM 显式决定"）；
+ *      保留函数是给将来显式使用，本文件的 ⑤/⑤b 只测函数，⑤c 钉住"启动路径零调用"；
  *   ⑥ `lastRun` 可查：`automation.{automationId,sessionId,sessionKey,retired}` + `status`。
  *
  * @module test/automation-early-retire.test
@@ -22,7 +24,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -281,7 +283,7 @@ test('④ 即建即撤：会话一确认就 retireRow + adopt，后续可复用�
   }
 });
 
-test('⑤ 启动清扫：活行全 retire，过期/未到期/已删的不动', () => {
+test('⑤ 清扫函数本身（显式调用）：活行全 retire，过期/未到期/已删的不动', () => {
   const home = fixtureHome();
   const restore = useHome(home);
   try {
@@ -325,7 +327,7 @@ test('⑤ 启动清扫：活行全 retire，过期/未到期/已删的不动', (
   }
 });
 
-test('⑤b 启动清扫：库文件不存在 ⇒ 回空且不得创建空库（没装桌面端的机器上不能凭空造文件）', () => {
+test('⑤b 清扫函数本身（显式调用）：库文件不存在 ⇒ 回空且不得创建空库（没装桌面端的机器上不能凭空造文件）', () => {
   const home = mkdtempSync(join(tmpdir(), 'wb-early-retire-'));
   const restore = useHome(home);
   try {
@@ -340,6 +342,26 @@ test('⑤b 启动清扫：库文件不存在 ⇒ 回空且不得创建空库（�
     restore();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('⑤c 启动路径**不再**自动清扫：apply.js 对 sweepStartupAutomationRows 零引用（2026-11-08 用户要求）', () => {
+  // ★ 为什么用源码断言而不是 spy：`apply.js` 是装配入口，没有可注入的模块桩；
+  //   而这条要求恰恰是"**这段代码不存在**"——源码里没有调用是它最直接的机器可查形态。
+  //   行为级负控（真启动一次，库里活行必须原封不动）在 `test/host.test.js` 里另有一条。
+  const source = readFileSync(new URL('../src/host/apply.js', import.meta.url), 'utf8');
+  // 只看**代码行**：apply.js 的注释里必须能提这个名字（说明"为什么不再自动清扫"），
+  // 那不是引用；把注释行（`//` / 块注释 `*` / `/*` 开头）剔掉再查，避免拿说明文字当证据。
+  const codeLines = source
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+  const code = codeLines.join('\n');
+  assert.equal(
+    /sweepStartupAutomationRows/.test(code),
+    false,
+    '★ apply.js 代码里不得引用 sweepStartupAutomationRows —— 启动自动清扫已按用户要求移除（连 import 也不留）',
+  );
+  // 负控：注释里必须写清"为什么不再自动清理"（防止下一个人当成漏掉的一步又加回来）。
+  assert.match(source, /启动不再自动清扫|不再自动清理/);
 });
 
 test('⑥ retireArmedRows 只 SELECT 活行 + 逐行软删，不建行', () => {

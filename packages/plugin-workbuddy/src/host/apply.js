@@ -16,7 +16,6 @@ import { PLUGIN_ID, NS, TOOL_RUN, MEMBER_NAME } from '../shared/constants.js';
 import { createRuntime } from './config/runtime.js';
 import { Config } from './config/schema.js';
 import { createDispatcher } from './gateway/dispatch.js';
-import { sweepStartupAutomationRows } from './gateway/automation.js';
 import { createLiveCredits } from './launch/live-credits.js';
 import { createDailyCheckin } from './launch/daily-checkin.js';
 import { detectWorkBuddy } from './probe/detect.js';
@@ -81,17 +80,15 @@ function apply(ctx, config) {
       ctx.logger?.warn?.(`[${PLUGIN_ID}] startup swept ${swept.swept.length} stale own session(s): ${swept.swept.join(', ')}`);
     }
   } catch { /* 启动清理失败 = 本轮多 new 一次，不挡装配 */ }
-  // ★★★ 启动清扫计划任务活行（2026-10-02，约 200 元事故的根因闸）★★★
-  // 一行 `automations` 活行 = 桌面端调度器下一次 tick 就会开一条**真会话**并**真扣积分**。
-  // `retireRow()` 只能在点火进程还活着时执行；dsh 中途被杀/崩溃 ⇒ 那一行以活状态留到
-  // `valid_until`（约 25 分钟）⇒ **用户下次打开 WorkBuddy 它自己开工**。
-  // 这里只 `SELECT` 活行 + 逐行软删，不建行、不重发 prompt；失败不带崩装配（下次启动再扫）。
-  try {
-    const res = sweepStartupAutomationRows();
-    if (res.swept.length > 0) {
-      ctx.logger?.warn?.(`[${PLUGIN_ID}] startup retired ${res.swept.length} armed automation row(s): ${res.swept.join(', ')} (dsh was likely killed mid-ignition; they would have fired on next desktop tick)`);
-    }
-  } catch { /* 清扫失败 = 下次启动再扫，不挡装配 */ }
+  // ★★★ 2026-11-08（用户要求）：**启动不再自动清扫计划任务活行** ★★★
+  // 旧行为：每次启动调 `sweepStartupAutomationRows()`，把库里所有"到点未作废"的活行一次性退役。
+  // 它解决的是"dsh 在点火中途被杀 ⇒ 那一行下次会被桌面端调度器捡起来"的事故（2026-10-02），
+  // 但代价是**用户想保留的任务也会在下次启动时被一起删掉**，且用户没有任何选择权。
+  // 用户明确要求改为"删除由用户/LLM 显式决定"：
+  //   · 用户 —— 设置卡片 → `POST /plugin-workbuddy/tasks/delete`（只软删那一条）；
+  //   · 模型 —— `workbuddy_purge` 的 `automation_id`（同样只软删那一条）。
+  // `automation.js` 的 `sweepStartupAutomationRows()` / `retireArmedRows()` 仍保留
+  // （显式调用可用，函数本身有测试），**只是这里不再调用**。一行都不碰。
   // ②' 积分（★ 2026-09-28 改为**真值直读**）：走 wbipc 只读查询，借桌面端登录态，不持账号凭据。
   //     取代了旧的"主理人手填锚点 + 插件本地推算"账本（credit-ledger.js 已删）。
   const credits = createLiveCredits({ ns: NS, read: () => runtime.currentConfig() });
