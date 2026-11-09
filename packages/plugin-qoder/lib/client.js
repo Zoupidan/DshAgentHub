@@ -279,10 +279,12 @@ window.__ModuleLoader__.load({
       const models = Array.isArray(status?.models) ? status.models : [];
       const modelOptions = models.map((m) => String(m?.modelKey ?? m?.id ?? '')).filter(Boolean);
       const signinMeta = status?.signin ?? { configured: false };
-      const credits = status?.credits ?? null;
-      const claimState = credits?.claimState || (signinMeta.configured ? 'unknown' : 'unconfigured');
-      const usage = credits?.usage ?? null;
-      const claimable = claimState === 'claimable';
+      const configured = signinMeta.configured === true;
+      const rawCredits = status?.credits ?? null;
+      const credits = configured ? rawCredits : (rawCredits && rawCredits.error ? { claimState: 'unconfigured', region: 'cn', error: rawCredits.error } : { claimState: 'unconfigured', region: 'cn' });
+      const claimState = configured ? (credits?.claimState || 'unknown') : 'unconfigured';
+      const usage = configured ? (credits?.usage ?? null) : null;
+      const claimable = configured && claimState === 'claimable';
       const probe = status?.probe && typeof status.probe === 'object' ? status.probe : null;
       const showConnectHint = enabled && probe && probe.installed === false;
 

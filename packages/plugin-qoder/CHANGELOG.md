@@ -1,5 +1,9 @@
 # Changelog — dsh-plugin-qoder
 
+## 0.1.3 (2026-11-09)
+
+- 修复凭据/签到状态不一致：vault 未配置时不再显示运行时残留的“已签到/已领取”，统一显示未配置；status 路由在未配置时返回 `claimState: unconfigured`。
+
 ## 0.1.2 (2026-11-09)
 
 - 保存/刷新凭据时更明确地展示上游错误（toast + 状态行），便于定位 PAT/网络/API 问题。

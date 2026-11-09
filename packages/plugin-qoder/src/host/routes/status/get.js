@@ -42,6 +42,7 @@ export function makeStatusRoute(runtime, sessions, dispatch) {
       }
       const cred = getCredentialMeta();
       const sessionRows = typeof sessions?.summary === 'function' ? await sessions.summary(20) : [];
+      const runtimeCredits = runtime.credits?.() ?? null;
       sendJson(res, 200, {
         pluginId: PACKAGE_NAME,
         registry: runtime.registry?.() ?? 'unknown',
@@ -64,7 +65,7 @@ export function makeStatusRoute(runtime, sessions, dispatch) {
         sessions: sessionRows,
         inFlight: runtime.inFlight?.() ?? [],
         lastRun: runtime.lastRun?.() ?? null,
-        credits: runtime.credits?.() ?? null,
+        credits: cred.configured ? runtimeCredits : { claimState: 'unconfigured', region: 'cn' },
         signin: { configured: cred.configured, region: 'cn', accountId: cred.accountId, masked: cred.masked },
         scheduledTasks: { supported: false, count: 0, note: 'Qoder 无计划任务列表；scheduled_tasks=0 不变式' },
         approvalRelay: { status: 'unknown', verified: false },

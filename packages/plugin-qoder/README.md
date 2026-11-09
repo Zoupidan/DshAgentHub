@@ -1,4 +1,4 @@
-# dsh-plugin-qoder (v0.1.2)
+# dsh-plugin-qoder (v0.1.3)
 
 把本机 **Qoder CN** 桌面端纳入 DshAgentHub / dsh 控制平面的第三个 harness 插件（WorkBuddy ✓ / OpenCode ✓ / **Qoder**），注册在「Harness 接入」父设置页的 `Qoder` 标签下。
 
