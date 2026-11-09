@@ -1,5 +1,10 @@
 # Changelog — dsh-plugin-qoder
 
+## 0.1.5 (2026-11-09)
+
+- host 装配对齐 opencode：`webServer/settings`/`systemPrompt` deferred inject 不再静默吞错，路由注册失败可被宿主记录；修复 tools effect 未正确传递 reconcile 结果的问题。
+- 目的：消除静默失败，定位/修复 host 路由（`/plugin-qoder/*`）与配置注册不生效的根因。
+
 ## 0.1.4 (2026-11-09)
 
 - 启动项状态请求增加超时与 host 路由异常兜底，避免“加载中”永久卡住；失败时显示错误信息便于定位。
