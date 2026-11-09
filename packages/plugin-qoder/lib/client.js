@@ -202,7 +202,12 @@ window.__ModuleLoader__.load({
 
       async function refreshCredits() {
         setBusy(true);
-        try { await fetchJson(ROUTE_CREDITS, { method: 'POST' }); await pullStatus(); }
+        setToast('');
+        try {
+          const res = await fetchJson(ROUTE_CREDITS, { method: 'POST' });
+          if (res && res.credits && res.credits.error) setToast(T.fail + String(res.credits.error.message || res.credits.error.kind || '刷新失败'));
+          await pullStatus();
+        }
         catch (e) { setToast(T.fail + errorText(e)); }
         finally { setBusy(false); }
       }
@@ -240,9 +245,13 @@ window.__ModuleLoader__.load({
         setBusy(true); setToast('');
         try {
           const res = await fetchJson(ROUTE_SIGNIN, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pat }) });
-          if (res && res.ok === false) setToast(T.fail + (res.message || res.reason || '保存失败'));
+          if (res && res.ok === false) {
+            setToast(T.fail + (res.message || res.reason || '保存失败'));
+          } else if (res && res.credits && res.credits.error) {
+            setToast(T.fail + String(res.credits.error.message || res.credits.error.kind || '凭据已保存，但刷新余额失败'));
+          }
           setPatInput('');
-          await refreshCredits();
+          await pullStatus();
         } catch (e) { setToast(T.fail + errorText(e)); }
         finally { setBusy(false); }
       }
@@ -313,8 +322,8 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dsh-qc-hint', key: 'h' }, T.patHint),
           ]),
           h('div', { className: 'dsh-qc-btns', key: 'btns' }, [
-            h('button', { key: 'save', type: 'button', className: 'dsh-qc-btn dsh-qc-btn--p', disabled: busy || !String(patInput || '').trim(), onClick: savePat }, T.save),
-            h('button', { key: 'claim', type: 'button', className: 'dsh-qc-btn', disabled: busy || !signinMeta.configured, onClick: claim }, claimable ? T.claim : (claimState === 'claimed' ? T.claimed : T.claim)),
+            h('button', { key: 'save', type: 'button', className: 'dsh-qc-btn', disabled: busy || !String(patInput || '').trim(), onClick: savePat }, T.save),
+            h('button', { key: 'claim', type: 'button', className: 'dsh-qc-btn' + (claimable ? ' dsh-qc-btn--p' : ''), disabled: busy || !signinMeta.configured, onClick: claim }, claimable ? T.claim : (claimState === 'claimed' ? T.claimed : T.claim)),
             h('button', { key: 'ref', type: 'button', className: 'dsh-qc-btn', disabled: busy, onClick: refreshCredits }, T.refresh),
             signinMeta.configured ? h('button', { key: 'out', type: 'button', className: 'dsh-qc-btn', disabled: busy, onClick: clearPat }, T.logout) : null,
           ]),
