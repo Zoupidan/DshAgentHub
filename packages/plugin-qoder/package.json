@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-qoder",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "description": "把本机 Qoder CN 桌面端暴露成 dsh 的模型面工具：经 CDP + window.qoderDesktop.applicationInvoke 完成创建/复用会话、下发、只读回执、模型/思考/上下文观测与签到积分（CN；零反代、零 CLI、零 GUI 自动化、全可视化）。",

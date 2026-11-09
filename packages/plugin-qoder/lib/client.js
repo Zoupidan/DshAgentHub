@@ -198,7 +198,15 @@ window.__ModuleLoader__.load({
         };
       }, [open, inView]);
 
-      async function loadStartup() { try { setStartup(await fetchJson(ROUTE_STARTUP)); } catch (e) { setStartup({ error: errorText(e) }); } }
+      async function loadStartup() {
+        try {
+          const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          const t = ac ? setTimeout(() => { try { ac.abort(); } catch {} }, 8000) : null;
+          const res = await fetchJson(ROUTE_STARTUP, ac ? { signal: ac.signal } : undefined);
+          if (t) clearTimeout(t);
+          setStartup(res && typeof res === 'object' ? res : { error: 'invalid-response' });
+        } catch (e) { setStartup({ error: errorText(e) }); }
+      }
 
       async function refreshCredits() {
         setBusy(true);
@@ -293,7 +301,7 @@ window.__ModuleLoader__.load({
 
         h('label', { className: 'dsh-qc-row', key: 'en' }, [
           h('span', { className: 'dsh-qc-row__label', key: 'l' }, T.enabled),
-          h('input', { key: 'i', type: 'checkbox', className: 'dsh-qc-switch', checked: enabled, disabled: disabled || busy, onChange: onToggleEnabled }),
+          h('input', { key: 'i', type: 'checkbox', className: 'dsh-qc-switch', checked: enabled, disabled: disabled, onChange: onToggleEnabled }),
         ]),
         showConnectHint ? h('div', { className: 'dsh-qc-line dsh-qc-warn', key: 'conn' }, T.notConnected) : null,
 
